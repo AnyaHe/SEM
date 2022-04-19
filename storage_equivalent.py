@@ -14,7 +14,7 @@ def add_storage_equivalents(model, residual_load, **kwargs):
 
     def meet_residual_load (model, time):
         return sum(model.charging[time_horizon, time] for time_horizon in
-                   model.time_horizons_set) == model.residual_load.loc[time, 0]
+                   model.time_horizons_set) == model.residual_load.iloc[time]
 
     def maximum_charging(model, time_horizon, time):
         return model.charging_max[time_horizon] >= model.charging[time_horizon, time]
@@ -99,8 +99,8 @@ if __name__ == "__main__":
     solver = "gurobi"
     grid_dir = r"C:\Users\aheider\Documents\Software\Semester Project Scripts\Scripts and Data\grids\1690"
     time_increment = pd.to_timedelta('1h')
-    load = pd.read_csv(grid_dir + "/load.csv", header=None)
-    feedin = pd.read_csv(grid_dir + r"\generation_alone.csv", header=None)
+    load = pd.read_csv(grid_dir + "/load.csv", header=None)[0]
+    feedin = pd.read_csv(grid_dir + r"\generation_alone.csv", header=None)[0]
     residual_load = (load - feedin)#.resample(time_increment).mean().reset_index()
     model = pm.ConcreteModel()
     model.time_set = pm.RangeSet(0, len(residual_load) - 1)
@@ -119,7 +119,7 @@ if __name__ == "__main__":
     caps_neg = pd.Series(model.caps_neg.extract_values())
     relative_energy_levels = (energy_levels.T + caps_neg).divide(caps)
     abs_charging = pd.Series(model.abs_charging.extract_values()).unstack()
-    total_demand = load.sum().values[0]
+    total_demand = load.sum()
     shifted_energy_df = pd.DataFrame(columns=["energy_stored", "energy_charge", "energy_discharge"],
                                      index=model.time_horizons_set)
     shifted_energy_df["energy_stored"] = abs_charging.sum(axis=1)/2
