@@ -95,7 +95,7 @@ def minimize_energy(model):
                for time_horizon in model.time_horizons_set)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":bbbbbb
     solver = "gurobi"
     grid_dir = r"C:\Users\aheider\Documents\Software\Semester Project Scripts\Scripts and Data\grids\1690"
     time_increment = pd.to_timedelta('1h')
