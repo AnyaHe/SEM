@@ -1,9 +1,9 @@
 import pandas as pd
 import os
 
-grid_dir = r"H:\Grids_IYCE"
-grid_ids = [176, 177, 1056, 1690, 1811, 2534]
-
+grid_dir = r"C:\Users\mosta\Flexibility-Quantification"
+#grid_ids = [176, 177, 1056, 1690, 1811, 2534]
+grid_ids = [176]
 
 def scale_residual_load(ts_load, ts_feedin, ts_reference, energy_ev=0, energy_hp=0):
     energy_load = ts_load.sum()
@@ -11,6 +11,13 @@ def scale_residual_load(ts_load, ts_feedin, ts_reference, energy_ev=0, energy_hp
     energy_reference = ts_reference.sum()
     scaling_factor = (energy_load + energy_ev + energy_hp -
                       energy_feedin)/energy_reference
+    print(energy_load)
+    print(energy_feedin)
+    print(energy_reference)
+    print(scaling_factor)
+    print(ts_load.shape)
+    print(ts_feedin.shape)
+    print(ts_reference.shape)
     new_residual_load = ts_load - ts_feedin - \
                         scaling_factor * ts_reference
     if abs(new_residual_load.sum()) > 1e-4:

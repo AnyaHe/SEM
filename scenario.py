@@ -6,15 +6,17 @@ import matplotlib.pyplot as plt
 from scaling import scale_residual_load
 from storage_equivalent import add_storage_equivalents, minimize_energy
 
-grid_dir = r"H:\Grids_IYCE"
-grid_ids = [176, 177, 1056, 1690, 1811, 2534]
+#grid_dir = r"H:\Grids_IYCE"
+grid_dir = r"C:\Users\mosta\Flexibility-Quantification"
+#grid_ids = [176, 177, 1056, 1690, 1811, 2534]
+grid_ids = [176]
 scenario = "reference"
 
 
 if __name__ == "__main__":
     solver = "gurobi"
     time_increment = pd.to_timedelta('1h')
-    ts_reference = pd.read_csv("data/vres_reference_ego100.csv", index_col=0,
+    ts_reference = pd.read_csv("vres_reference_ego100.csv", index_col=0,
                                parse_dates=True)
     #ts_reference.loc[:, "solar"] = 0
     shifted_energy_df = pd.DataFrame()
