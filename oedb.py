@@ -1,23 +1,20 @@
 import os
 import pandas as pd
 from sqlalchemy import func
-import random
 import logging
 import sys
 import numpy
 
 sys.path.append(r"U:\Software\SEST\eDisGo")
 
-from edisgo.network.timeseries import add_generators_timeseries
 from edisgo.tools import session_scope
-from edisgo.tools.geo import (
-    proj2equidistant,
-)
+from edisgo.tools.config import Config
+from edisgo.network.timeseries import import_load_timeseries
 
 logger = logging.getLogger("edisgo")
 
 if "READTHEDOCS" not in os.environ:
-    from egoio.db_tables import model_draft, supply
+    from egoio.db_tables import model_draft, supply, demand
     from shapely.ops import transform
     from shapely.wkt import loads as wkt_loads
 
@@ -292,7 +289,81 @@ def combine_wind_timeseries(gens_wind, generation):
     ).T
 
 
+def oedb_import_demand():
+    def _retrieve_load_fs_from_oedb(session):
+        """Retrieve time series from oedb
+
+        """
+        load_fs_sqla = (
+            session.query(
+                orm_load_fs.federal_states,
+                orm_load_fs.elec_consumption_households,
+                orm_load_fs.elec_consumption_industry,
+                orm_load_fs.elec_consumption_tertiary_sector
+            )
+        )
+
+        load = pd.read_sql_query(
+            load_fs_sqla .statement, session.bind,
+            index_col=["federal_states"]
+        )
+        return load
+
+    def _retrieve_load_la_from_oedb(session):
+        """Retrieve time series from oedb
+
+        """
+        # ToDo: add option to retrieve subset of time series
+        # ToDo: find the reference power class for mvgrid/w_id and insert
+        #  instead of 4
+        load_la_sqla = (
+            session.query(
+                orm_load_la.id, orm_load_la.sector_consumption_residential,
+                orm_load_la.sector_consumption_retail,
+                orm_load_la.sector_consumption_industrial,
+                orm_load_la.sector_consumption_agricultural
+            )
+            .filter(orm_load_la_version)
+        )
+
+        load_la = pd.read_sql_query(
+            load_la_sqla.statement, session.bind,
+            index_col=["id"]
+        )
+        return load_la
+    orm_load_fs_name = 'EgoDemandFederalstate'
+    orm_load_fs = demand.__getattribute__(orm_load_fs_name)
+
+    with session_scope() as session:
+        load_fs = _retrieve_load_fs_from_oedb(session)
+
+    orm_load_la_name = 'EgoDpLoadarea'
+    orm_load_la = demand.__getattribute__(orm_load_la_name)
+    orm_load_la_version = (
+            orm_load_la.version == 'v0.4.5'
+    )
+    with session_scope() as session:
+        load_la = _retrieve_load_la_from_oedb(session)
+
+    return load_fs, load_la
+
+
 if __name__ == "__main__":
+    load_fs, load_la = oedb_import_demand()
+    load_fs.loc["Deutschland", "retail"] = \
+        load_la["sector_consumption_retail"].sum()
+    load_fs.loc["Deutschland", "agricultural"] = \
+        load_la["sector_consumption_agricultural"].sum()
+    load_fs.rename(columns={"elec_consumption_households": "residential",
+                            "elec_consumption_industry": "industrial"},
+                   inplace=True)
+    annual_consumptions = load_fs.loc["Deutschland",
+                                      ["agricultural", "industrial",
+                                       "residential", "retail"]]
+    config = Config()
+    timeseries = import_load_timeseries(config, "demandlib", 2011)
+    scaled_ts = timeseries.multiply(annual_consumptions)
+    scaled_ts.to_csv("demand_germany_ego100.csv")
     generators = oedb("ego100")
     # generators["weather_cell_id"] = generators["weather_cell_id"].astype(int)
     # Extract wind generators and group them into power classes
