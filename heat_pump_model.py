@@ -2,6 +2,18 @@ import pyomo.environ as pm
 import pandas as pd
 
 
+def scale_heat_demand_to_grid(ts_heat_demand, grid_id):
+    def population_per_grid():
+        """From https://openenergy-platform.org/dataedit/view/grid/ego_dp_mv_griddistrict v0.4.3"""
+        return {176: 35373, 177: 32084, 1056: 13007, 1690: 14520, 1811: 19580, 2534: 24562}
+    total_nr_hps = 7 # Mio
+    total_population = 83.1 # Mio
+    heat_demand_per_hp = 12 # MWh
+    ts_heat_demand_per_hp = ts_heat_demand/ts_heat_demand.sum() * heat_demand_per_hp
+    grid_nr_hp = int(round(total_nr_hps/total_population*population_per_grid()[grid_id], 0))
+    return grid_nr_hp * ts_heat_demand_per_hp, grid_nr_hp
+
+
 def add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, heat_demand):
     def energy_balance_hp_tes(model, time):
         return model.charging_hp_el[time] * cop.loc[time, "COP 2011"] == \
@@ -12,7 +24,8 @@ def add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, heat_demand):
 
     def charging_tes(model, time):
         return model.energy_tes[time] == \
-               model.energy_tes[time-1] + model.charging_tes[time]
+               model.energy_tes[time-1] + model.charging_tes[time] * \
+               (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
     # save fix parameters
     model.capacity_tes = capacity_tes
     model.p_nom_hp = p_nom_hp
@@ -33,6 +46,10 @@ def reduced_operation(model):
     return sum(model.charging_hp_el[time]**2 for time in model.time_set)
 
 
+# def abs_objective(model):
+#     return sum(model.charging_tes[time]*model.charging_hp_el[time] for time in model.time_set)
+
+
 if __name__ == "__main__":
     solver = "gurobi"
     nr_hp = 2983
@@ -46,6 +63,7 @@ if __name__ == "__main__":
     model.time_non_zero = model.time_set - [model.time_set.at(1)]
     model.times_fixed_soc = pm.Set(initialize=[model.time_set.at(1),
                                                model.time_set.at(-1)])
+    model.time_increment = pd.to_timedelta('1h')
     model = add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, heat_demand)
     model.objective = pm.Objective(rule=reduced_operation,
                                    sense=pm.minimize,
