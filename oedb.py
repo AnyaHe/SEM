@@ -4,8 +4,11 @@ from sqlalchemy import func
 import logging
 import sys
 import numpy
+import geopandas as gpd
 
-sys.path.append(r"U:\Software\SEST\eDisGo")
+sys.path.append(r"C:\Users\aheider\Documents\Software\eDisGo")
+
+from egoio.db_tables import supply, boundaries, grid
 
 from edisgo.tools import session_scope
 from edisgo.tools.config import Config
@@ -95,6 +98,7 @@ def oedb(generator_scenario):
             session.query(
                 orm_re_generators.columns.id,
                 orm_re_generators.columns.id.label("generator_id"),
+                orm_re_generators.columns.scenario,
                 orm_re_generators.columns.subst_id,
                 orm_re_generators.columns.la_id,
                 orm_re_generators.columns.mvlv_subst_id,
@@ -114,9 +118,10 @@ def oedb(generator_scenario):
                     func.ST_Transform(orm_re_generators.columns.geom, srid)
                 ).label("geom_em"),
             ).filter(
-                orm_re_generators_version)
+                orm_re_generators_version
+            )#.filter(
+             #   orm_re_generators_scenario)
         )
-
         # extend basic query for MV generators and read data from db
 
         gens = pd.read_sql_query(
@@ -133,7 +138,6 @@ def oedb(generator_scenario):
         # convert capacity from kW to MW
         gens.p_nom = pd.to_numeric(gens.p_nom) / 1e3
 
-
         return gens
 
     oedb_data_source = "versioned"
@@ -148,6 +152,7 @@ def oedb(generator_scenario):
     )
 
     data_version = 'v0.4.5'
+    scenario = "eGo 100"
 
     # import ORMs
     orm_re_generators = supply.__getattribute__(orm_re_generators_name)
@@ -156,6 +161,11 @@ def oedb(generator_scenario):
     orm_re_generators_version = (
             orm_re_generators.columns.version == data_version
     )
+
+    # set scenario condition
+    # orm_re_generators_scenario = (
+    #         orm_re_generators.columns.scenario == scenario
+    # )
 
     # get conventional and renewable generators
     with session_scope() as session:
@@ -313,15 +323,18 @@ def oedb_import_demand():
         """Retrieve time series from oedb
 
         """
-        # ToDo: add option to retrieve subset of time series
-        # ToDo: find the reference power class for mvgrid/w_id and insert
-        #  instead of 4
+        srid = 4326
         load_la_sqla = (
             session.query(
                 orm_load_la.id, orm_load_la.sector_consumption_residential,
                 orm_load_la.sector_consumption_retail,
                 orm_load_la.sector_consumption_industrial,
-                orm_load_la.sector_consumption_agricultural
+                orm_load_la.sector_consumption_agricultural,
+                func.ST_AsText(
+                    func.ST_Transform(
+                        orm_load_la.geom, srid
+                    )
+                ).label("geometry")
             )
             .filter(orm_load_la_version)
         )
@@ -330,6 +343,7 @@ def oedb_import_demand():
             load_la_sqla.statement, session.bind,
             index_col=["id"]
         )
+        load_la.geometry = load_la.apply(lambda _: wkt_loads(_.geometry), axis=1)
         return load_la
     orm_load_fs_name = 'EgoDemandFederalstate'
     orm_load_fs = demand.__getattribute__(orm_load_fs_name)
@@ -348,7 +362,64 @@ def oedb_import_demand():
     return load_fs, load_la
 
 
-if __name__ == "__main__":
+def import_geolocations_states():
+    srid = 4326
+    with session_scope() as session:
+        table = boundaries.BkgVg2502Lan
+        query = session.query(
+            table.id,
+            table.ags,
+            table.nuts,
+            table.gen,
+            table.wsk,
+            func.ST_AsText(
+                func.ST_Transform(
+                    table.geom, srid
+                )
+            ).label("geometry")
+        )
+
+        geom_data = pd.read_sql_query(query.statement, query.session.bind)
+        geom_data.geometry = geom_data.apply(lambda _: wkt_loads(_.geometry), axis=1)
+        geom_data = gpd.GeoDataFrame(geom_data)
+
+        # join geometries with same nuts ID as some states have more than one polygon
+        states_geoms = geom_data.dissolve(by='nuts', aggfunc='sum')
+        return states_geoms, geom_data
+
+
+def assign_geom_to_states(states_geoms, geoms):
+    """
+    Returns state given grid districts are in.
+
+    It is better to use the grid district's centroids.
+
+    Parameters
+    -----------
+    states_geoms : geopandas DataFrame
+        Dataframe with nuts ID of state in index and geometry in column
+        'geometry'.
+    geoms : geopandas DataFrame
+        Dataframe with MV grid geometries or centroids.
+
+    Returns
+    -------
+    geopandas DataFrame
+        Returns provided dataframe with grid district geometries with
+        an additional column containing the nuts ID of the state
+        the grid district is in.
+
+    """
+
+    geoms["state"] = None
+    for state in states_geoms.index:
+        pip_mask = geoms.within(
+            states_geoms.loc[state, 'geometry'])
+        geoms.loc[pip_mask, "state"] = state
+    return geoms
+
+
+def download_germany_wide_demand():
     load_fs, load_la = oedb_import_demand()
     load_fs.loc["Deutschland", "retail"] = \
         load_la["sector_consumption_retail"].sum()
@@ -363,30 +434,100 @@ if __name__ == "__main__":
     config = Config()
     timeseries = import_load_timeseries(config, "demandlib", 2011)
     scaled_ts = timeseries.multiply(annual_consumptions)
-    scaled_ts.to_csv("demand_germany_ego100.csv")
+    return scaled_ts
+
+
+def download_germany_wide_fluctuating_generation():
     generators = oedb("ego100")
     # generators["weather_cell_id"] = generators["weather_cell_id"].astype(int)
     # Extract wind generators and group them into power classes
     wind_generators = generators.loc[generators.generator_type == "wind"]
     wind_generators = get_wind_power_classes(wind_generators)
-    grouped_wind_generators = wind_generators[["subtype", "p_nom", "weather_cell_id", "power_class"]]\
+    grouped_wind_generators = wind_generators[
+        ["subtype", "p_nom", "weather_cell_id", "power_class"]] \
         .groupby(["subtype", "weather_cell_id", "power_class"]).sum()
     # Extract solar generators and group them into weather_cells
     solar_generators = generators.loc[generators.generator_type == "solar"]
-    grouped_solar_generators = solar_generators[["p_nom", "weather_cell_id"]]\
+    grouped_solar_generators = solar_generators[["p_nom", "weather_cell_id"]] \
         .groupby("weather_cell_id").sum()
     # get timeseries data
     timeindex = pd.date_range("1/1/2011", periods=8760, freq="H")
-    weather_cell_ids = [int(id) for id in wind_generators.append(solar_generators).weather_cell_id.unique()
+    weather_cell_ids = [int(id) for id in wind_generators.append(
+        solar_generators).weather_cell_id.unique()
                         if not numpy.isnan(id)]
     feedin_ts = import_feedin_timeseries(weather_cell_ids, timeindex)
-    #included_weather_cells = feedin_ts.columns.get_level_values(1)
-    #wind_weather_cells = grouped_wind_generators.index.get_level_values(0)
+    # included_weather_cells = feedin_ts.columns.get_level_values(1)
+    # wind_weather_cells = grouped_wind_generators.index.get_level_values(0)
     # combine both
     solar_ts = combine_solar_timeseries(grouped_solar_generators, feedin_ts)
     wind_ts = combine_wind_timeseries(grouped_wind_generators, feedin_ts)
     reference_ts = pd.DataFrame()
     reference_ts["wind"] = wind_ts.sum(axis=1)
     reference_ts["solar"] = solar_ts.sum(axis=1)
-    reference_ts.to_csv("data/vres_reference_ego100.csv")
+    return reference_ts
+
+
+def download_state_wise_demand():
+    global state
+    load_fs, load_la = oedb_import_demand()
+    load_la_geom = gpd.GeoDataFrame(load_la[["geometry"]])
+    load_la_geom["geometry"] = load_la_geom["geometry"].centroid
+    states_geom, states_data = import_geolocations_states()
+    load_la_geom = assign_geom_to_states(states_geom, load_la_geom)
+    load_la["state"] = load_la_geom.state
+    load_states = load_la.drop(columns="geometry").groupby("state").sum()
+    config = Config()
+    timeseries = import_load_timeseries(config, "demandlib", 2011)
+    ts_states = pd.DataFrame()
+    for state, load_state in load_states.rename(
+            columns={"sector_consumption_agricultural": "agricultural",
+                     "sector_consumption_retail": "retail",
+                     "sector_consumption_residential": "residential",
+                     "sector_consumption_industrial": "industrial",
+                     }).iterrows():
+        ts_states[state] = timeseries.multiply(load_state).sum(axis=1)
+    return ts_states
+
+
+if __name__ == "__main__":
+    # ts_states = download_state_wise_demand()
+    # ts_states.to_csv("demand_states_ego100.csv")
+    generators = oedb("ego100")
+    generators_onshore = generators.loc[~generators.geom.isnull()]
+    generators_onshore.geom = generators_onshore.apply(
+        lambda _: wkt_loads(str(_.geom)), axis=1)
+    generators_onshore_geom = gpd.GeoDataFrame(generators_onshore[["geom"]]).rename(
+        columns={"geom": "geometry"})
+    states_geom, states_data = import_geolocations_states()
+    for i in range(41913): #
+        generators_onshore_geom_tmp = \
+            assign_geom_to_states(states_geom,
+                                  generators_onshore_geom.iloc[i*100:100+i*100])
+        generators.loc[generators_onshore_geom_tmp.index, "state"] = generators_onshore_geom_tmp.state
+    # Todo: assign offshore to states
+    generators.loc[generators.geom.isnull(), "state"] = "offshore"
+    # generators["weather_cell_id"] = generators["weather_cell_id"].astype(int)
+    # Extract wind generators and group them into power classes
+    wind_generators = generators.loc[generators.generator_type == "wind"]
+    wind_generators = get_wind_power_classes(wind_generators)
+    grouped_wind_generators = wind_generators[["state", "subtype", "p_nom", "weather_cell_id", "power_class"]]\
+        .groupby(["state", "subtype", "weather_cell_id", "power_class"]).sum()
+    # Extract solar generators and group them into weather_cells
+    solar_generators = generators.loc[generators.generator_type == "solar"]
+    grouped_solar_generators = solar_generators[["state", "p_nom", "weather_cell_id"]]\
+        .groupby(["state", "weather_cell_id"]).sum()
+    # get timeseries data
+    timeindex = pd.date_range("1/1/2011", periods=8760, freq="H")
+    weather_cell_ids = [int(id) for id in wind_generators.append(solar_generators).weather_cell_id.unique()
+                        if not numpy.isnan(id)]
+    feedin_ts = import_feedin_timeseries(weather_cell_ids, timeindex)
+    # combine both
+    reference_ts = pd.DataFrame()
+    for state in generators.state.unique():
+        solar_ts = combine_solar_timeseries(grouped_solar_generators.loc[state],
+                                            feedin_ts)
+        wind_ts = combine_wind_timeseries(grouped_wind_generators.loc[state], feedin_ts)
+        reference_ts[f"wind_{state}"] = wind_ts.sum(axis=1)
+        reference_ts[f"solar_{state}"] = solar_ts.sum(axis=1)
+    reference_ts.to_csv("data/vres_reference_states_ego100.csv")
     print("SUCCESS")
