@@ -38,7 +38,7 @@ def get_connection_matrix_of_states():
 
 
 if __name__ == "__main__":
-    scenario = "States_isolated_test"
+    scenario = "States_connected_test"
     solver = "gurobi"
     time_increment = pd.to_timedelta('1h')
     vres = pd.read_csv(r"vres_reference_ego100.csv", index_col=0,
@@ -51,10 +51,12 @@ if __name__ == "__main__":
                                 parse_dates=True)
     demand_states["offshore"] = 0
     connections, flows = get_connection_matrix_of_states()
-    sum_energy = demand_states.sum()
+    sum_energy = demand_states.sum().sum()
+    sum_res = vres_states.sum().sum()
     scaled_ts_reference = pd.DataFrame(columns=demand_states.columns)
     for state in scaled_ts_reference.columns:
-        scaled_ts_reference[state] = vres.divide(vres.sum()).sum(axis=1).multiply(sum_energy[state])
+        scaled_ts_reference[state] = \
+            (vres_states["wind_"+state]+vres_states["solar_"+state])/sum_res*sum_energy
     shifted_energy_df = pd.DataFrame(columns=["state", "storage_type",
                                               "energy_stored"])
     shifted_energy_rel_df = pd.DataFrame(columns=["state", "storage_type",
@@ -79,5 +81,5 @@ if __name__ == "__main__":
     abs_charging = pd.Series(model.abs_charging.extract_values()).unstack()
     df_tmp = (abs_charging.sum(axis=1) / 2).reset_index().rename(
         columns={"level_0": "state", "level_1": "storage_type", 0: "energy_stored"})
-    # df_tmp.to_csv("results/storage_equivalents_{}.csv".format(scenario))
+    df_tmp.to_csv("results/storage_equivalents_{}.csv".format(scenario))
     print("SUCCESS")
