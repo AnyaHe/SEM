@@ -12,9 +12,13 @@ def add_storage_equivalents(model, residual_load, **kwargs):
                model.charging[time_horizon, time] * \
                (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
 
-    def meet_residual_load (model, time):
+    def meet_residual_load(model, time):
+        if hasattr(model, "charging_hp_el"):
+            hp_el = model.charging_hp_el[time]
+        else:
+            hp_el = 0
         return sum(model.charging[time_horizon, time] for time_horizon in
-                   model.time_horizons_set) == model.residual_load.iloc[time]
+                   model.time_horizons_set) == model.residual_load.iloc[time] + hp_el
 
     def maximum_charging(model, time_horizon, time):
         return model.charging_max[time_horizon] >= model.charging[time_horizon, time]
