@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 import pyomo.environ as pm
 from storage_equivalent import add_storage_equivalents_model, minimize_energy_multi
@@ -38,19 +40,24 @@ def get_connection_matrix_of_states():
 
 
 if __name__ == "__main__":
-    scenario = "States_connected_test"
+    save_results = True
+    isolated = False
+    scenario = "States_connected"
     solver = "gurobi"
     time_increment = pd.to_timedelta('1h')
-    vres = pd.read_csv(r"vres_reference_ego100.csv", index_col=0,
+    vres = pd.read_csv(r"data/vres_reference_ego100.csv", index_col=0,
                        parse_dates=True).divide(1000)
-    vres_states = pd.read_csv(r"vres_reference_states_ego100.csv", index_col=0,
-                       parse_dates=True).divide(1000)
+    vres_states = pd.read_csv(r"data/vres_reference_states_ego100.csv", index_col=0,
+                              parse_dates=True).divide(1000)
     vres_states["wind_offshore"] = vres.sum(axis=1) - vres_states.sum(axis=1)
     vres_states["solar_offshore"] = 0
-    demand_states = pd.read_csv("demand_states_ego100.csv", index_col=0,
+    demand_states = pd.read_csv("data/demand_states_ego100.csv", index_col=0,
                                 parse_dates=True)
+
     demand_states["offshore"] = 0
     connections, flows = get_connection_matrix_of_states()
+    if isolated:
+        connections.loc[:, :] = 0
     sum_energy = demand_states.sum().sum()
     sum_res = vres_states.sum().sum()
     scaled_ts_reference = pd.DataFrame(columns=demand_states.columns)
@@ -78,6 +85,13 @@ if __name__ == "__main__":
     energy_levels = pd.Series(model.energy_levels.extract_values()).unstack()
     caps = pd.Series(model.caps_pos.extract_values()).unstack() + pd.Series(
         model.caps_neg.extract_values()).unstack()
+    flows = pd.Series(model.flows.extract_values()).unstack()
+    if save_results:
+        os.makedirs(f"results/{scenario}", exist_ok=True)
+        charging.to_csv(f"results/{scenario}/charging.csv")
+        energy_levels.to_csv(f"results/{scenario}/energy_levels.csv")
+        caps.to_csv(f"results/{scenario}/caps.csv")
+        flows.to_csv(f"results/{scenario}/flows.csv")
     abs_charging = pd.Series(model.abs_charging.extract_values()).unstack()
     df_tmp = (abs_charging.sum(axis=1) / 2).reset_index().rename(
         columns={"level_0": "state", "level_1": "storage_type", 0: "energy_stored"})

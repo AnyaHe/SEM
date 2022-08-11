@@ -2,7 +2,9 @@ import pandas as pd
 import pyomo.environ as pm
 import matplotlib.pyplot as plt
 
-from storage_equivalent import add_storage_equivalents, minimize_energy
+from storage_equivalent import add_storage_equivalent_model, minimize_energy
+from scenario_Germany_HP_integration import import_heat_pumps
+from heat_pump_model import add_heat_pump_model
 
 if __name__ == "__main__":
     scenario = "weights"

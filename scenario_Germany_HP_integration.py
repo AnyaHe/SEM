@@ -2,8 +2,26 @@ import pandas as pd
 import pyomo.environ as pm
 import matplotlib.pyplot as plt
 
-from storage_equivalent import add_storage_equivalents, minimize_energy
+from storage_equivalent import add_storage_equivalents_model, minimize_energy
 from heat_pump_model import add_heat_pump_model
+
+
+def import_heat_pumps(nr_hp_mio):
+    nr_hp = nr_hp_mio * 1e6
+    heat_demand = pd.read_csv(
+        r"data/hp_heat_2011.csv",
+        header=None) / 1e3
+    cop = pd.read_csv(
+        r'data/COP_2011.csv')
+    capacity_tes = nr_hp * 0.05 * 1e-3  # GWh
+    p_nom_hp = nr_hp * 0.003 * 1e-3  # GW
+    heat_demand_per_hp = 12 * 1e-3  # GWh
+    ts_heat_demand_per_hp = heat_demand / heat_demand.sum() * heat_demand_per_hp
+    ts_heat_demand = ts_heat_demand_per_hp * nr_hp
+    ts_heat_el = ts_heat_demand.T.divide(cop["COP 2011"]).T
+    sum_energy_heat = ts_heat_el.sum().sum()
+    return heat_demand, cop, capacity_tes, p_nom_hp, ts_heat_demand, ts_heat_el, sum_energy_heat
+
 
 if __name__ == "__main__":
     scenario = "Germany_HP"
@@ -21,19 +39,8 @@ if __name__ == "__main__":
     shifted_energy_rel_df = pd.DataFrame(columns=["storage_type",
                                                   "energy_stored"])
     for nr_hp_mio in range(15):
-        nr_hp = nr_hp_mio * 1e6
-        heat_demand = pd.read_csv(
-            r"data/hp_heat_2011.csv",
-            header=None)/1e3
-        cop = pd.read_csv(
-            r'data/COP_2011.csv')
-        capacity_tes = nr_hp * 0.05 * 1e-3  # GWh
-        p_nom_hp = nr_hp * 0.003 * 1e-3  # GW
-        heat_demand_per_hp = 12 * 1e-3  # GWh
-        ts_heat_demand_per_hp = heat_demand / heat_demand.sum() * heat_demand_per_hp
-        ts_heat_demand = ts_heat_demand_per_hp * nr_hp
-        ts_heat_el = ts_heat_demand.T.divide(cop["COP 2011"]).T
-        sum_energy_heat = ts_heat_el.sum().sum()
+        (heat_demand, cop, capacity_tes, p_nom_hp,
+         ts_heat_demand, ts_heat_el, sum_energy_heat) = import_heat_pumps(nr_hp_mio)
         vres = scaled_ts_reference * (sum_energy + sum_energy_heat)
         if hp_mode == "flexible":
             new_res_load = demand.sum(axis=1) - vres.sum(axis=1)
@@ -48,7 +55,7 @@ if __name__ == "__main__":
         model.weighting = [1, 10, 100, 1000]
         if hp_mode == "flexible":
             model = add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, ts_heat_demand)
-        model = add_storage_equivalents(model, new_res_load)
+        model = add_storage_equivalents_model(model, new_res_load)
         model.objective = pm.Objective(rule=minimize_energy,
                                        sense=pm.minimize,
                                        doc='Define objective function')

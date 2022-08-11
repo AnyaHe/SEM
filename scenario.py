@@ -4,7 +4,7 @@ import pyomo.environ as pm
 import matplotlib.pyplot as plt
 
 from scaling import scale_residual_load
-from storage_equivalent import add_storage_equivalents, minimize_energy
+from storage_equivalent import add_storage_equivalent_model, minimize_energy
 from ev_model import add_ev_model
 from heat_pump_model import scale_heat_demand_to_grid, add_heat_pump_model
 
@@ -81,7 +81,7 @@ if __name__ == "__main__":
             model.time_non_zero = model.time_set - [model.time_set.at(1)]
             model.time_increment = time_increment
             model.weighting = [1, 7, 30, 365]
-            model = add_storage_equivalents(model, new_res_load)
+            model = add_storage_equivalent_model(model, new_res_load)
             model.objective = pm.Objective(rule=minimize_energy,
                                            sense=pm.minimize,
                                            doc='Define objective function')
