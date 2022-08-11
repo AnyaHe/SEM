@@ -7,28 +7,42 @@ from scenario_Germany_HP_integration import import_heat_pumps
 from heat_pump_model import add_heat_pump_model
 
 if __name__ == "__main__":
-    scenario = "weights"
+    scenario = "weights_hp"
     solver = "gurobi"
+    hp_mode = "flexible"
     time_increment = pd.to_timedelta('1h')
-    vres = pd.read_csv(r"vres_reference_ego100.csv", index_col=0,
+    vres = pd.read_csv(r"data/vres_reference_ego100.csv", index_col=0,
                        parse_dates=True).divide(1000)
-    demand = pd.read_csv(r"demand_germany_ego100.csv", index_col=0,
+    demand = pd.read_csv(r"data/demand_germany_ego100.csv", index_col=0,
                          parse_dates=True)
     sum_energy = demand.sum().sum()
-    vres = vres.divide(vres.sum().sum()).multiply(sum_energy)
+    nr_hp_mio = 19
+    (heat_demand, cop, capacity_tes, p_nom_hp,
+     ts_heat_demand, ts_heat_el, sum_energy_heat) = import_heat_pumps(nr_hp_mio)
+    vres = vres.divide(vres.sum().sum()).multiply(sum_energy + sum_energy_heat)
+    if hp_mode == "flexible":
+        new_res_load = demand.sum(axis=1) - vres.sum(axis=1)
+    else:
+        new_res_load = demand.sum(axis=1) + ts_heat_el.set_index(demand.index).sum(
+            axis=1) - vres.sum(axis=1)
     shifted_energy_df = pd.DataFrame(columns=["relative_weight", "storage_type",
                                               "energy_stored"])
     shifted_energy_rel_df = pd.DataFrame(columns=["relative_weight", "storage_type",
                                                   "energy_stored"])
     for relative_weighting in [1e-1, 1, 1e1, 1e2, 1e3]:
-        new_res_load = demand.sum(axis=1) - vres.sum(axis=1)
         model = pm.ConcreteModel()
         model.time_set = pm.RangeSet(0, len(new_res_load) - 1)
         model.time_non_zero = model.time_set - [model.time_set.at(1)]
         model.time_increment = time_increment
+        model.times_fixed_soc = pm.Set(initialize=[model.time_set.at(1),
+                                                   model.time_set.at(-1)])
         model.weighting = [relative_weighting, relative_weighting**2,
                            relative_weighting**3, relative_weighting**4]
-        model = add_storage_equivalents(model, new_res_load)
+        if hp_mode == "flexible":
+            model = add_heat_pump_model(model, p_nom_hp, capacity_tes, cop,
+                                        ts_heat_demand)
+
+        model = add_storage_equivalent_model(model, new_res_load)
         model.objective = pm.Objective(rule=minimize_energy,
                                        sense=pm.minimize,
                                        doc='Define objective function')
