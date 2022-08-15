@@ -2,7 +2,7 @@ import pandas as pd
 import pyomo.environ as pm
 import matplotlib.pyplot as plt
 
-from storage_equivalent import add_storage_equivalents_model, minimize_energy
+from storage_equivalent import add_storage_equivalent_model, minimize_energy
 from heat_pump_model import add_heat_pump_model
 
 
@@ -55,7 +55,7 @@ if __name__ == "__main__":
         model.weighting = [1, 10, 100, 1000]
         if hp_mode == "flexible":
             model = add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, ts_heat_demand)
-        model = add_storage_equivalents_model(model, new_res_load)
+        model = add_storage_equivalent_model(model, new_res_load)
         model.objective = pm.Objective(rule=minimize_energy,
                                        sense=pm.minimize,
                                        doc='Define objective function')

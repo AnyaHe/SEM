@@ -2,7 +2,7 @@ import pandas as pd
 import pyomo.environ as pm
 import matplotlib.pyplot as plt
 
-from storage_equivalent import add_storage_equivalents_model, minimize_energy
+from storage_equivalent import add_storage_equivalent_model, minimize_energy
 from ev_model import add_evs_model
 
 
@@ -14,7 +14,8 @@ def import_electric_vehicles(nr_ev_mio):
     nr_ev_ref = 26880 # from SEST
     flex_bands = {}
     for band in ["upper_power", "upper_energy", "lower_energy"]:
-        flex_bands[band] = pd.read_csv(f"data/{band}.csv", index_col=0, parse_dates=0)
+        flex_bands[band] = pd.read_csv(f"data/{band}.csv", index_col=0,
+                                       parse_dates=True)
     # scale bands and demand to new nr EV, resample to one hour
     ref_charging = ref_charging.divide(nr_ev_ref).multiply(nr_ev).resample("1h").mean()
     for band in flex_bands.keys():
@@ -59,7 +60,7 @@ if __name__ == "__main__":
         model.weighting = [1, 10, 100, 1000]
         if ev_mode == "flexible":
             model = add_evs_model(model, flexibility_bands)
-        model = add_storage_equivalents_model(model, new_res_load)
+        model = add_storage_equivalent_model(model, new_res_load)
         model.objective = pm.Objective(rule=minimize_energy,
                                        sense=pm.minimize,
                                        doc='Define objective function')
