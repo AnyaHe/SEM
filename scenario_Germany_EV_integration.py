@@ -30,7 +30,7 @@ def import_electric_vehicles(nr_ev_mio):
 if __name__ == "__main__":
     scenario = "Germany_EV"
     solver = "gurobi"
-    ev_mode = "inflexible"
+    ev_mode = "flexible"
     time_increment = pd.to_timedelta('1h')
     vres = pd.read_csv(r"data/vres_reference_ego100.csv", index_col=0,
                        parse_dates=True).divide(1000)
@@ -44,13 +44,18 @@ if __name__ == "__main__":
                                                   "energy_stored"])
     for nr_ev_mio in range(40):
         (reference_charging, flexibility_bands) = import_electric_vehicles(nr_ev_mio)
-        vres = scaled_ts_reference * (sum_energy + reference_charging.sum().sum())
         if ev_mode == "flexible":
+            energy_ev = reference_charging["inflexible"].sum() + \
+                        (flexibility_bands["upper_energy"].sum(axis=1)[-1]/0.9 +
+                         flexibility_bands["lower_energy"].sum(axis=1)[-1]/0.9)/2
+            vres = scaled_ts_reference * (sum_energy + energy_ev)
             new_res_load = \
                 demand.sum(axis=1) + reference_charging["inflexible"] - vres.sum(axis=1)
         else:
+            vres = scaled_ts_reference * (sum_energy + reference_charging.sum().sum())
             new_res_load = \
                 demand.sum(axis=1) + reference_charging.sum(axis=1) - vres.sum(axis=1)
+
         model = pm.ConcreteModel()
         model.time_set = pm.RangeSet(0, len(new_res_load) - 1)
         model.time_non_zero = model.time_set - [model.time_set.at(1)]
