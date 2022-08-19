@@ -10,12 +10,12 @@ def import_electric_vehicles(nr_ev_mio):
     nr_ev = nr_ev_mio * 1e6
     ref_charging = pd.read_csv(
         r"data/ref_charging.csv",
-        index_col=0, parse_dates=True)
+        index_col=0, parse_dates=True)/1e3
     nr_ev_ref = 26880 # from SEST
     flex_bands = {}
     for band in ["upper_power", "upper_energy", "lower_energy"]:
         flex_bands[band] = pd.read_csv(f"data/{band}.csv", index_col=0,
-                                       parse_dates=True)
+                                       parse_dates=True)/1e3
     # scale bands and demand to new nr EV, resample to one hour
     ref_charging = ref_charging.divide(nr_ev_ref).multiply(nr_ev).resample("1h").mean()
     for band in flex_bands.keys():
