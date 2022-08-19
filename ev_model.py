@@ -76,8 +76,8 @@ def add_evs_model(model, flex_bands, efficiency=0.9):
         :return:
         '''
         return model.energy_level_ev[cp, time] == \
-               (model.flex_bands["lower_energy"].loc[time, cp] +
-                model.flex_bands["upper_energy"].loc[time, cp]) / 2
+               (model.flex_bands["lower_energy"].iloc[time][cp] +
+                model.flex_bands["upper_energy"].iloc[time][cp]) / 2
 
     # save fix parameters
     model.charging_efficiency = efficiency
@@ -88,12 +88,12 @@ def add_evs_model(model, flex_bands, efficiency=0.9):
     model.charging_ev = \
         pm.Var(model.charging_points_set, model.time_set,
                bounds=lambda m, cp, t:
-               (0, m.flex_bands["upper_power"].loc[t, cp]))
+               (0, m.flex_bands["upper_power"].iloc[t][cp]))
     model.energy_level_ev = \
         pm.Var(model.charging_points_set, model.time_set,
                bounds=lambda m, cp, t:
-               (m.flex_bands["lower_energy"].loc[t, cp],
-                m.flex_bands["upper_energy"].loc[t, cp]))
+               (m.flex_bands["lower_energy"].iloc[t][cp],
+                m.flex_bands["upper_energy"].iloc[t][cp]))
     # add constraints
     model.EVCharging = pm.Constraint(model.charging_points_set, model.time_non_zero, rule=charging_ev)
     model.FixedEVEnergyLevel = pm.Constraint(model.charging_points_set, model.times_fixed_soc, rule=fixed_energy_level)
