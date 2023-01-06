@@ -1,4 +1,6 @@
 import pandas as pd
+import os
+import json
 
 
 def base_scenario():
@@ -26,7 +28,7 @@ def scenario_input_hps(scenario_dict={}, mode="inflexible"):
     """
     Method to add relevant information on modelled hps
     :param scenario_dict: dict
-        Dictionary with base scenario values, see ref:scenario_three_storage()
+        Dictionary with base scenario values, see ref:base_scenario
     :param mode: str
         Mode of heat pump operation, possible values: "flexible" and "inflexible"
     :return:
@@ -48,3 +50,61 @@ def scenario_input_hps(scenario_dict={}, mode="inflexible"):
         "ts_cop": cop
     })
     return scenario_dict
+
+
+def scenario_input_evs(scenario_dict={}, mode="inflexible"):
+    """
+    Method to add relevant information on modelled evs
+    :param scenario_dict: dict
+        Dictionary with base scenario values, see ref:base_scenario
+    :param mode: str
+        Mode of heat pump operation, possible values: "flexible" and "inflexible"
+    :return:
+        Updated dictionary with additional information on EVs
+    """
+    time_increment = scenario_dict.get("time_increment", "1h")
+    scenario_dict["time_increment"] = time_increment
+    ref_charging = (pd.read_csv(
+        r"data/ref_charging.csv", index_col=0, parse_dates=True) / 1e3).resample(
+        scenario_dict["time_increment"]).mean() # GW
+    if mode == "flexible":
+        flex_bands = {}
+        for band in ["upper_power", "upper_energy", "lower_energy"]:
+            flex_bands[band] = pd.read_csv(f"data/{band}.csv", index_col=0,
+                                           parse_dates=True) / 1e3
+            if "power" in band:
+                flex_bands[band] = flex_bands[band].resample(time_increment).mean()
+            elif "energy" in band:
+                flex_bands[band] = flex_bands[band].resample(time_increment).max()
+        scenario_dict.update({"ts_flex_bands": flex_bands})
+    scenario_dict.update({
+        "ev_mode": mode,
+        "ts_ref_charging": ref_charging,
+        "nr_ev_ref": 26880, # from SEST
+    })
+    return scenario_dict
+
+
+def save_scenario_dict(scenario_dict, res_dir):
+    """
+    Method to save scenario dict as json. Since dataframes cannot be saved, all
+    timeseries (which have to be named as "ts_<...>") are removed first.
+
+    :param scenario_dict: dict
+        Dictionary with scenario input, see ref:base_scenario, ref:scenario_input_hps  and
+        ref:scenario_input_evs
+    :param res_dir: str
+        Directory to which scenario dict is saved
+    :return: None
+    """
+    # remove timeseries as they cannot be saved in json format
+    keys = [key for key in scenario_dict.keys()]
+    for key in keys:
+        if "ts_" in key:
+            del scenario_dict[key]
+    # save scenario input
+    with open(
+            os.path.join(res_dir, "scenario_dict.json"),
+            'w', encoding='utf-8') as f:
+        json.dump(scenario_dict, f, ensure_ascii=False, indent=4)
+

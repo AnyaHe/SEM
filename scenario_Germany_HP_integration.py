@@ -1,11 +1,10 @@
 import pandas as pd
 import pyomo.environ as pm
 import os
-import json
 
 import storage_equivalent as se
 from heat_pump_model import add_heat_pump_model, scale_heat_pumps
-from scenario_input import base_scenario, scenario_input_hps
+from scenario_input import base_scenario, scenario_input_hps, save_scenario_dict
 from plotting import plot_storage_equivalent_germany_stacked
 
 
@@ -16,6 +15,7 @@ if __name__ == "__main__":
     # load scenario values
     scenario_dict = base_scenario()
     scenario_dict["hp_mode"] = hp_mode
+    scenario_dict["solver"] = solver
     if hp_mode is not None:
         scenario_dict = scenario_input_hps(scenario_dict=scenario_dict, mode=hp_mode)
     sum_energy = scenario_dict["ts_demand"].sum().sum()
@@ -96,13 +96,5 @@ if __name__ == "__main__":
     plot_storage_equivalent_germany_stacked(shifted_energy_df,
                                             parameter={"nr_hp": "Number HPs [Mio.]"})
     # remove timeseries as they cannot be saved in json format
-    keys = [key for key in scenario_dict.keys()]
-    for key in keys:
-        if "ts_" in key:
-            del scenario_dict[key]
-    # save scenario input
-    with open(
-            os.path.join(res_dir, "scenario_dict.json"),
-            'w', encoding='utf-8') as f:
-        json.dump(scenario_dict, f, ensure_ascii=False, indent=4)
+    save_scenario_dict(scenario_dict, res_dir)
     print("SUCCESS")
