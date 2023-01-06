@@ -17,8 +17,13 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
             hp_el = model.charging_hp_el[time]
         else:
             hp_el = 0
+        if hasattr(model, "charging_ev"):
+            ev = sum([model.charging_ev[cp, time] for cp in model.charging_points_set])
+        else:
+            ev = 0
         return sum(model.charging[time_horizon, time] for time_horizon in
-                   model.time_horizons_set) == model.residual_load.iloc[time] + hp_el
+                   model.time_horizons_set) == \
+            model.residual_load.iloc[time] + hp_el + ev
 
     def maximum_charging(model, time_horizon, time):
         return model.charging_max[time_horizon] >= model.charging[time_horizon, time]
@@ -197,6 +202,24 @@ def minimize_energy(model):
     return sum(model.weighting[time_horizon] * sum(model.abs_charging[time_horizon, time]
                                                    for time in model.time_set)
                for time_horizon in model.time_horizons_set)
+
+
+def minimize_energy_and_power(model):
+    if hasattr(model, "charging_hp_el") and (model.p_nom_hp > 0):
+        hp_el = sum([(model.charging_hp_el[time]/model.p_nom_hp)**2
+                     for time in model.time_set])
+    else:
+        hp_el = 0
+    if hasattr(model, "charging_ev") and (model.flex_bands["upper_power"].max().max()>0):
+        ev = sum([
+            (model.charging_ev[cp, time]/model.flex_bands["upper_power"][cp].max())**2
+            for cp in model.charging_points_set for time in model.time_set])
+    else:
+        ev = 0
+    return sum(
+        model.weighting[time_horizon] * sum(model.abs_charging[time_horizon, time]
+                                            for time in model.time_set)
+        for time_horizon in model.time_horizons_set)+1e-9*(hp_el+ev)
 
 
 def minimize_energy_multi(model):
