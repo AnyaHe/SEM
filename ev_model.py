@@ -152,6 +152,20 @@ def import_flexibility_bands_use_case(dir, use_cases):
     return flexibility_bands
 
 
+def scale_electric_vehicles(nr_ev_mio, scenario_dict):
+    nr_ev = nr_ev_mio * 1e6
+    # scale bands and demand to new nr EV, resample to one hour
+    ref_charging = scenario_dict["ts_ref_charging"].divide(
+        scenario_dict["nr_ev_ref"]).multiply(
+        nr_ev)
+    flex_bands = {}
+    if scenario_dict["ev_mode"] == "flexible":
+        for band in ["upper_power", "upper_energy", "lower_energy"]:
+            flex_bands[band] = scenario_dict["ts_flex_bands"][band].divide(
+                scenario_dict["nr_ev_ref"]).multiply(nr_ev)
+    return ref_charging, flex_bands
+
+
 def reduced_operation(model):
     return sum(model.charging_ev[time]**2 for time in model.time_set)
 
@@ -186,8 +200,8 @@ if __name__ == "__main__":
         results_df["charging_ev"] = pd.Series(model.charging_ev.extract_values())
         results_df["energy_level_ev"] = pd.Series(model.energy_level_ev.extract_values())
     elif mode == "multi":
-        grid_dir = r"H:\Grids Ladina\177"
-        flex_bands = import_flexibility_bands(grid_dir)
+        grid_dir = r"C:\Users\aheider\Documents\Grids\Julian\emob_debugging\1056\feeder\01\electromobility"
+        flex_bands = import_flexibility_bands(grid_dir, efficiency=1.0)
         for name, band in flex_bands.items():
             flex_bands[name] = band.resample(time_increment).mean().reset_index().drop(columns=["index"])
         model = pm.ConcreteModel()

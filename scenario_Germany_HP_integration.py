@@ -4,7 +4,9 @@ import os
 
 import storage_equivalent as se
 from heat_pump_model import add_heat_pump_model, scale_heat_pumps
-from scenario_input import base_scenario, scenario_input_hps, save_scenario_dict
+from ev_model import add_evs_model, scale_electric_vehicles
+from scenario_input import base_scenario, scenario_input_hps, save_scenario_dict, \
+    scenario_input_evs
 from plotting import plot_storage_equivalent_germany_stacked
 
 
@@ -12,12 +14,19 @@ if __name__ == "__main__":
     scenario = "test"
     solver = "gurobi"
     hp_mode = "flexible" # None, "flexible", "inflexible"
+    ev_mode = None # None, "flexible", "inflexible"
+    # create results directory
+    res_dir = os.path.join(f"results/{scenario}")
+    os.makedirs(res_dir, exist_ok=True)
     # load scenario values
     scenario_dict = base_scenario()
     scenario_dict["hp_mode"] = hp_mode
+    scenario_dict["ev_mode"] = ev_mode
     scenario_dict["solver"] = solver
     if hp_mode is not None:
         scenario_dict = scenario_input_hps(scenario_dict=scenario_dict, mode=hp_mode)
+    if ev_mode is not None:
+        scenario_dict = scenario_input_evs(scenario_dict=scenario_dict, mode=ev_mode)
     sum_energy = scenario_dict["ts_demand"].sum().sum()
     scaled_ts_reference = scenario_dict["ts_vres"].divide(
         scenario_dict["ts_vres"].sum().sum())
@@ -42,20 +51,40 @@ if __name__ == "__main__":
              ts_heat_demand, ts_heat_el, sum_energy_heat) = \
                 scale_heat_pumps(nr_hp_mio=nr_hp_mio,
                                  scenario_dict=scenario_dict)
-            # capacity_tes = capacity_tes * 2
+            ts_heat_el = ts_heat_el.set_index(scenario_dict["ts_demand"].index).sum(
+                axis=1)
             if hp_mode == "flexible":
                 model = add_heat_pump_model(model, p_nom_hp, capacity_tes,
                                             scenario_dict["ts_cop"], ts_heat_demand)
         else:
             ts_heat_el = pd.Series(index=scenario_dict["ts_demand"].index, data=0)
             sum_energy_heat = 0
+            nr_hp_mio = 0
+        if ev_mode is not None:
+            nr_ev_mio = i * 5
+            (reference_charging, flexibility_bands) = scale_electric_vehicles(
+                nr_ev_mio, scenario_dict)
+            if ev_mode == "flexible":
+                energy_ev = reference_charging["inflexible"].sum() + \
+                            (flexibility_bands["upper_energy"].sum(axis=1)[-1] / 0.9 +
+                             flexibility_bands["lower_energy"].sum(axis=1)[
+                                 -1] / 0.9) / 2
+                ref_charging = reference_charging["inflexible"]
+                add_evs_model(model, flexibility_bands)
+            else:
+                energy_ev = reference_charging.sum().sum()
+                ref_charging = reference_charging.sum(axis=1)
+        else:
+            nr_ev_mio = 0
+            energy_ev = 0
+            ref_charging = pd.Series(index=scenario_dict["ts_demand"].index, data=0)
         # determine new residual load
-        vres = scaled_ts_reference * (sum_energy + sum_energy_heat)
-        new_res_load = scenario_dict["ts_demand"].sum(axis=1) - vres.sum(axis=1)
+        vres = scaled_ts_reference * (sum_energy + sum_energy_heat + energy_ev)
+        new_res_load = \
+            scenario_dict["ts_demand"].sum(axis=1) + ref_charging - vres.sum(axis=1)
         if hp_mode != "flexible":
             new_res_load = new_res_load + \
-                           ts_heat_el.set_index(scenario_dict["ts_demand"].index).sum(
-                               axis=1)
+                           ts_heat_el
         # add storage equivalents
         model = se.add_storage_equivalent_model(
             model, new_res_load, time_horizons=scenario_dict["time_horizons"])
@@ -65,7 +94,10 @@ if __name__ == "__main__":
                                        doc='Define objective function')
         opt = pm.SolverFactory(solver)
         if solver == "gurobi":
-            opt.options["Method"] = 0
+            if ev_mode == "flexible":
+                opt.options["Method"] = 1
+            else:
+                opt.options["Method"] = 0
         results = opt.solve(model, tee=True)
         # extract results
         charging = pd.Series(model.charging.extract_values()).unstack()
@@ -79,22 +111,32 @@ if __name__ == "__main__":
         if (hp_mode == "flexible") & (nr_hp_mio == 20.0):
             hp_operation = pd.Series(model.charging_hp_el.extract_values())
             hp_operation.index = scenario_dict["ts_demand"].index
-            hp_operation.to_csv(f"results/hp_charging_flexible_{scenario}.csv")
+            hp_operation.to_csv(f"{res_dir}/hp_charging_flexible.csv")
+        # save flexible hp operation
+        if (ev_mode == "flexible") & (nr_ev_mio == 40.0):
+            ev_operation = pd.Series(model.charging_ev.extract_values()).unstack().T
+            ev_operation.index = scenario_dict["ts_demand"].index
+            ev_operation.to_csv(f"{res_dir}/ev_charging_flexible.csv")
         df_tmp = (abs_charging.sum(axis=1) / 2).reset_index().rename(
             columns={"index": "storage_type", 0: "energy_stored"})
         df_tmp["nr_hp"] = nr_hp_mio
+        df_tmp["nr_ev"] = nr_ev_mio
         shifted_energy_df = shifted_energy_df.append(df_tmp, ignore_index=True)
         df_tmp["energy_stored"] = df_tmp["energy_stored"] / sum_energy * 100
         shifted_energy_rel_df = shifted_energy_rel_df.append(df_tmp,
                                                              ignore_index=True)
-    res_dir = os.path.join(f"results/{scenario}")
-    os.makedirs(res_dir, exist_ok=True)
     shifted_energy_df.to_csv(f"{res_dir}/storage_equivalents.csv")
     shifted_energy_rel_df.to_csv(
         f"{res_dir}/storage_equivalents_relative.csv")
     # plot results
-    plot_storage_equivalent_germany_stacked(shifted_energy_df,
-                                            parameter={"nr_hp": "Number HPs [Mio.]"})
+    if hp_mode is not None:
+        plot_storage_equivalent_germany_stacked(shifted_energy_df,
+                                                parameter={
+                                                    "nr_hp": "Number HPs [Mio.]"})
+    if ev_mode is not None:
+        plot_storage_equivalent_germany_stacked(shifted_energy_df,
+                                                parameter={
+                                                    "nr_ev": "Number EVs [Mio.]"})
     # remove timeseries as they cannot be saved in json format
     save_scenario_dict(scenario_dict, res_dir)
     print("SUCCESS")
