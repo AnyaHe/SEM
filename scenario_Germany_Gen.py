@@ -5,7 +5,7 @@ import pyomo.environ as pm
 from storage_equivalent import add_storage_equivalent_model, minimize_energy
 
 if __name__ == "__main__":
-    scenario = "Germany_v1"
+    scenario = "Germany_three_storage"
     solver = "gurobi"
     time_increment = pd.to_timedelta('1h')
     vres = pd.read_csv(r"data/vres_reference_ego100.csv", index_col=0,
@@ -30,7 +30,8 @@ if __name__ == "__main__":
         model.time_non_zero = model.time_set - [model.time_set.at(1)]
         model.time_increment = time_increment
         model.weighting = [10, 100, 1000, 10000]
-        model = add_storage_equivalent_model(model, new_res_load)
+        model = add_storage_equivalent_model(model, new_res_load,
+                                             time_horizons=[24, 7*24, 24*366])
         model.objective = pm.Objective(rule=minimize_energy,
                                        sense=pm.minimize,
                                        doc='Define objective function')
