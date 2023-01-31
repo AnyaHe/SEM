@@ -83,7 +83,8 @@ def add_evs_model(model, flex_bands, efficiency=0.9):
     model.charging_efficiency = efficiency
     model.flex_bands = flex_bands
     # set up set
-    model.charging_points_set = pm.Set(initialize=model.flex_bands["lower_energy"].columns)
+    model.charging_points_set = \
+        pm.Set(initialize=model.flex_bands["lower_energy"].columns)
     # set up variables
     model.charging_ev = \
         pm.Var(model.charging_points_set, model.time_set,
@@ -95,8 +96,11 @@ def add_evs_model(model, flex_bands, efficiency=0.9):
                (m.flex_bands["lower_energy"].iloc[t][cp],
                 m.flex_bands["upper_energy"].iloc[t][cp]))
     # add constraints
-    model.EVCharging = pm.Constraint(model.charging_points_set, model.time_non_zero, rule=charging_ev)
-    model.FixedEVEnergyLevel = pm.Constraint(model.charging_points_set, model.times_fixed_soc, rule=fixed_energy_level)
+    model.EVCharging = pm.Constraint(model.charging_points_set, model.time_non_zero,
+                                     rule=charging_ev)
+    model.FixedEVEnergyLevel = \
+        pm.Constraint(model.charging_points_set, model.times_fixed_soc,
+                      rule=fixed_energy_level)
     return model
 
 
@@ -152,6 +156,41 @@ def import_flexibility_bands_use_case(dir, use_cases):
     return flexibility_bands
 
 
+def import_and_merge_flexibility_bands_extended(data_dir, grid_ids=[],
+                                                append="extended"):
+    """
+    Method to import and merge flexibility bands that allow shifting over standing
+    times. The number of EVs is extracted to update nr_ev_ref in scenario_input_ev.
+
+    :param data_dir:
+    :param grid_ids:
+    :param append:
+    :return:
+    """
+    flexibility_bands = {}
+    nr_ev = 0
+    for band in ["upper_power", "upper_energy", "lower_energy"]:
+        band_df = pd.DataFrame(columns=[append])
+        for grid_id in grid_ids:
+            flexibility_bands_tmp = \
+                pd.read_csv(data_dir+f'/{grid_id}/{band}_{append}.csv',
+                            index_col=0, parse_dates=True, dtype=np.float32)
+            if band_df.index.empty:
+                band_df = \
+                    pd.DataFrame(columns=[append], index=flexibility_bands_tmp.index,
+                                 data=0)
+            band_df[append] += flexibility_bands_tmp.sum(axis=1)
+            if band == "upper_power":
+                nr_ev += len(flexibility_bands_tmp.columns)
+        # remove numeric problems
+        if "upper" in band:
+            flexibility_bands[band] = band_df + 1e-6
+        elif "lower" in band:
+            flexibility_bands[band] = band_df - 1e-6
+    print(f"Total of {nr_ev} EVs imported.")
+    return flexibility_bands
+
+
 def scale_electric_vehicles(nr_ev_mio, scenario_dict):
     nr_ev = nr_ev_mio * 1e6
     # scale bands and demand to new nr EV, resample to one hour
@@ -162,7 +201,8 @@ def scale_electric_vehicles(nr_ev_mio, scenario_dict):
     if scenario_dict["ev_mode"] == "flexible":
         for band in ["upper_power", "upper_energy", "lower_energy"]:
             flex_bands[band] = scenario_dict["ts_flex_bands"][band].divide(
-                scenario_dict["nr_ev_ref"]).multiply(nr_ev)
+                scenario_dict["nr_ev_ref"]).multiply(nr_ev)[
+                scenario_dict["use_cases_flexible"]]
     return ref_charging, flex_bands
 
 
@@ -176,7 +216,7 @@ def reduced_operation_multi(model):
 
 
 if __name__ == "__main__":
-    mode = "use_case"
+    mode = "extended"
     save_files = True
     solver = "gurobi"
     time_increment = pd.to_timedelta('1h')
@@ -223,13 +263,12 @@ if __name__ == "__main__":
         if save_files:
             grid_dir = r"C:\Users\aheider\Documents\Grids"
             grid_ids = [176, 177, 1056, 1690, 1811, 2534]
-            flex_bands_home = {"upper_power": pd.DataFrame(),
-                               "upper_energy": pd.DataFrame(),
-                               "lower_energy": pd.DataFrame()}
-            flex_bands_work = {"upper_power": pd.DataFrame(),
-                               "upper_energy": pd.DataFrame(),
-                               "lower_energy": pd.DataFrame()}
-            ref_charging = pd.DataFrame(columns=["flex", "inflexible"])
+            use_cases = ["home", "work", "public", "hpc"]
+            flex_use_cases = ["home", "work", "public"]
+            flex_bands = {case: {"upper_power": pd.DataFrame(),
+                           "upper_energy": pd.DataFrame(),
+                           "lower_energy": pd.DataFrame()} for case in flex_use_cases}
+            ref_charging = pd.DataFrame(columns=use_cases)
             for grid_id in grid_ids:
                 print(f"Start loading grid {grid_id}")
                 cps = pd.read_csv(os.path.join(grid_dir, str(grid_id), "dumb",
@@ -240,38 +279,42 @@ if __name__ == "__main__":
                                                     "charging_points_active_power.csv"),
                                        index_col=0, parse_dates=True)
                 if ref_charging.empty:
-                    ref_charging["flex"] = charging[cps.loc[cps.use_case.isin(
-                        ["home", "work"])].index].sum(axis=1)
-                    ref_charging["inflexible"] = charging[cps.loc[~cps.use_case.isin(
-                        ["home", "work"])].index].sum(axis=1)
+                    for case in cps.use_case.unique():
+                        ref_charging[case] = charging[cps.loc[cps.use_case.isin(
+                            [case])].index].sum(axis=1)
                 else:
-                    ref_charging["flex"] = \
-                        ref_charging["flex"] + charging[cps.loc[cps.use_case.isin(
-                            ["home", "work"])].index].sum(axis=1)
-                    ref_charging["inflexible"] = \
-                        ref_charging["inflexible"] + charging[cps.loc[~cps.use_case.isin(
-                            ["home", "work"])].index].sum(axis=1)
+                    for case in use_cases:
+                        ref_charging[case] = \
+                            ref_charging[case] + charging[cps.loc[cps.use_case.isin(
+                                [case])].index].sum(axis=1)
                 print("Reference charging loaded")
-                flex_bands_home_tmp = \
-                    import_flexibility_bands_use_case(
-                        os.path.join(grid_dir, str(grid_id)), use_cases=["home"])
-                flex_bands_work_tmp = \
-                    import_flexibility_bands_use_case(
-                        os.path.join(grid_dir, str(grid_id)), use_cases=["work"])
-                for band in flex_bands_home.keys():
-                    flex_bands_home[band] = \
-                        pd.concat([flex_bands_home[band], flex_bands_home_tmp[band]],
-                                  axis=1)
-                    flex_bands_work[band] = \
-                        pd.concat([flex_bands_work[band], flex_bands_work_tmp[band]],
-                                  axis=1)
+                flex_bands_tmp = {}
+                for use_case in flex_use_cases:
+                    flex_bands_tmp[use_case] = import_flexibility_bands_use_case(
+                        os.path.join(grid_dir, str(grid_id)), use_cases=[use_case])
+                for band in flex_bands_tmp["home"].keys():
+                    for use_case in flex_use_cases:
+                        flex_bands[use_case][band] = \
+                            pd.concat([flex_bands[use_case][band],
+                                       flex_bands_tmp[use_case][band]],
+                                      axis=1)
                 print("Bands imported")
-            ref_charging.to_csv("data/ref_charging.csv")
-            flex_bands = {"upper_power": pd.DataFrame(),
+            ref_charging.to_csv("data/ref_charging_use_case.csv")
+            flex_bands_final = {"upper_power": pd.DataFrame(),
                           "upper_energy": pd.DataFrame(),
                           "lower_energy": pd.DataFrame()}
-            for band in flex_bands.keys():
-                flex_bands[band]["home"] = flex_bands_home[band].sum(axis=1)
-                flex_bands[band]["work"] = flex_bands_work[band].sum(axis=1)
-                flex_bands[band].to_csv(f"data/{band}.csv")
+            for band in flex_bands_final.keys():
+                for use_case in flex_use_cases:
+                    flex_bands_final[band][use_case] = \
+                        flex_bands[use_case][band].sum(axis=1)
+                flex_bands_final[band].to_csv(f"data/{band}_flex+.csv")
+    elif mode == "extended":
+        grid_dir = r"H:\Grids"
+        grid_ids = [176, 177, 1056, 1690, 1811, 2534]
+        use_case = "extended"
+        bands = import_and_merge_flexibility_bands_extended(grid_dir, grid_ids=grid_ids,
+                                                            append=use_case)
+        if save_files:
+            for band in bands.keys():
+                bands[band].to_csv(f"data/{band}_flex++.csv")
     print("SUCCESS")
