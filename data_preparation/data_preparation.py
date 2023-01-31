@@ -24,7 +24,9 @@ def get_heat_pump_timeseries_data(data_dir, scenario_dict):
     timesteps = scenario_dict["ts_timesteps"]
     profiles_hp = profiles_hp.loc[timesteps.tz_localize("UTC")]
     # calculate heat_demand
-    heat_demand = merge_heat_demand(profiles_hp, scenario_dict)
+    heat_demand = sum([
+        profiles_hp[f"DE_heat_demand_space_{building}"]for building in ["SFH", "MFH"]
+    ])
     # calculate cop
     cop = merge_cop_heat_pumps(profiles_hp, scenario_dict)
     return heat_demand, cop
@@ -54,30 +56,6 @@ def merge_cop_heat_pumps(profiles_hp, scenario_dict):
     return scaled_cop
 
 
-def merge_heat_demand(profiles_hp, scenario_dict):
-    """
-    Method to calculate Germany wide heat demand by weighting the input time series from
-    when2heat with the share of SFH and MFH (from statista)
-
-    :param profiles_hp: pd.DataFrame
-        input time-series from when2heat
-        (https://data.open-power-system-data.org/when2heat/)
-    :param scenario_dict: dict
-        has to have entries "hp_weight_air", "hp_weight_ground", "hp_weight_floor" and
-        "hp_weight_radiator" and "ts_timesteps". Note that hp_weight_air + hp_weight_ground =
-        hp_weight_floor + hp_weight_radiator = 1 has to be given.
-    :return: pd.Series
-        heat demand time series
-    """
-    scenario_dict["buildings_nr_MFH"] = \
-        scenario_dict["buildings_nr_total"] - scenario_dict["buildings_nr_SFH"]
-    scaled_heat_demand = sum([
-        scenario_dict[f"buildings_nr_{building}"]/scenario_dict[f"buildings_nr_total"] *
-        profiles_hp[f"DE_heat_demand_space_{building}"]for building in ["SFH", "MFH"]
-    ])
-    return scaled_heat_demand
-
-
 def import_flexibility_bands(dir, use_cases):
     flexibility_bands = {}
 
@@ -103,8 +81,6 @@ def import_flexibility_bands(dir, use_cases):
 
 if __name__ == "__main__":
     scenario_dict = {
-        "buildings_nr_SFH": 16.105, # Mio. [Source: Statista]
-        "buildings_nr_total": 19.376,  # Mio. [Source: Statista]
         "hp_weight_air": 0.71,
         "hp_weight_ground": 0.29,
         "hp_weight_floor": 0.6,

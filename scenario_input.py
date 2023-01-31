@@ -44,8 +44,6 @@ def scenario_input_hps(scenario_dict={}, mode="inflexible", timesteps=None):
         else:
             timesteps = pd.date_range("1/1/2011 00:00", periods=8760, freq="H")
     scenario_dict.update({
-        "buildings_nr_SFH": 16.105, # Mio. [Source: Statista]
-        "buildings_nr_total": 19.376,  # Mio. [Source: Statista]
         "hp_weight_air": 0.71,
         "hp_weight_ground": 0.29,
         "hp_weight_floor": 0.6,
