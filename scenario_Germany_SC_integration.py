@@ -95,6 +95,7 @@ if __name__ == "__main__":
                                               "energy_stored"])
     shifted_energy_rel_df = pd.DataFrame(columns=["storage_type",
                                                   "energy_stored"])
+    storage_durations = pd.DataFrame()
     for i in range(9):
         # add hps if included
         if hp_mode is not None:
@@ -166,12 +167,16 @@ if __name__ == "__main__":
                 opt.options["Method"] = 0
         results = opt.solve(model, tee=True)
         # extract results
-        charging = pd.Series(model.charging.extract_values()).unstack()
-        energy_levels = pd.Series(model.energy_levels.extract_values()).unstack()
-        caps = pd.Series(model.caps_pos.extract_values()) + pd.Series(
-            model.caps_neg.extract_values())
-        caps_neg = pd.Series(model.caps_neg.extract_values())
-        relative_energy_levels = (energy_levels.T + caps_neg).divide(caps)
+        charging = pd.Series(model.charging.extract_values()).unstack().T.set_index(
+            new_res_load.index)
+        charging.to_csv(f"{res_dir}/charging_{i}.csv")
+        if extract_storage_duration:
+            storage_durations = pd.concat([storage_durations,
+                                           se.determine_storage_durations(charging, i)])
+        energy_levels = \
+            pd.Series(model.energy_levels.extract_values()).unstack().T.set_index(
+                new_res_load.index)
+        energy_levels.to_csv(f"{res_dir}/energy_levels_{i}.csv")
         abs_charging = pd.Series(model.abs_charging.extract_values()).unstack()
         # save flexible hp operation
         if (hp_mode == "flexible") & (nr_hp_mio == 20.0):
@@ -196,6 +201,7 @@ if __name__ == "__main__":
     shifted_energy_df.to_csv(f"{res_dir}/storage_equivalents.csv")
     shifted_energy_rel_df.to_csv(
         f"{res_dir}/storage_equivalents_relative.csv")
+    storage_durations.to_csv(f"{res_dir}/storage_durations.csv")
     # plot results
     if hp_mode is not None:
         plot_storage_equivalent_germany_stacked(shifted_energy_df,

@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-#hello
+
 
 def shifting_time(netload, reference_curve=None):
     """
@@ -112,11 +112,12 @@ def determine_all_shifting_events_for_single_timeindex(amount_to_shift,
 
     energy_shifted = energy_imbalance.loc[cumulative_shifting.index,
                                           'used_amount'].values
-    storage_equivalent = storage_equivalent.append(
-        pd.DataFrame({'storage_duration': storage_duration,
-                      'surplus_index': surplus_indices,
-                      'deficit_index': deficit_indices,
-                      'energy_shifted': energy_shifted}), ignore_index=True)
+    storage_equivalent = \
+        pd.concat([storage_equivalent, pd.DataFrame(
+            {'storage_duration': storage_duration,
+             'surplus_index': surplus_indices,
+             'deficit_index': deficit_indices,
+             'energy_shifted': energy_shifted})], ignore_index=True)
     return storage_equivalent, energy_imbalance
 
 

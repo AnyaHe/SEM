@@ -3,12 +3,19 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 
+from quantification.flexibility_quantification import shifting_time
+
+
 def add_storage_equivalent_model(model, residual_load, **kwargs):
     def fix_energy_levels(model, time_horizon, time):
         return model.energy_levels[time_horizon, time] == 0
 
     def charge_storages(model, time_horizon, time):
-        return model.energy_levels[time_horizon, time] == model.energy_levels[time_horizon, time-1] + \
+        if time == 0:
+            energy_levels_pre = 0
+        else:
+            energy_levels_pre = model.energy_levels[time_horizon, time - 1]
+        return model.energy_levels[time_horizon, time] == energy_levels_pre + \
                model.charging[time_horizon, time] * \
                (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
 
@@ -72,7 +79,7 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
                 times.append(time)
         setattr(model, "FixEnergyLevels{}".format(time_horizon), pm.Constraint([time_horizon], times,
                                               rule=fix_energy_levels))
-    model.ChargingStorages = pm.Constraint(model.time_horizons_set, model.time_non_zero,
+    model.ChargingStorages = pm.Constraint(model.time_horizons_set, model.time_set,
                                           rule=charge_storages)
     model.ResidualLoad = pm.Constraint(model.time_set, rule=meet_residual_load)
     model.MaximumCharging = pm.Constraint(model.time_horizons_set, model.time_set,
@@ -97,8 +104,12 @@ def add_storage_equivalents_model(model, residual_load, connections, flows, **kw
         return model.energy_levels[cell, time_horizon, time] == 0
 
     def charge_storages(model, cell, time_horizon, time):
+        if time == 0:
+            energy_levels_pre = 0
+        else:
+            energy_levels_pre = model.energy_levels[cell, time_horizon, time-1]
         return model.energy_levels[cell, time_horizon, time] == \
-               model.energy_levels[cell, time_horizon, time-1] + \
+               energy_levels_pre + \
                model.charging[cell, time_horizon, time] * \
                (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
 
@@ -172,7 +183,7 @@ def add_storage_equivalents_model(model, residual_load, connections, flows, **kw
         setattr(model, f"FixEnergyLevels{time_horizon}",
                 pm.Constraint(model.cells_set, [time_horizon], times,
                               rule=fix_energy_levels))
-    model.ChargingStorages = pm.Constraint(model.cells_set, model.time_horizons_set, model.time_non_zero,
+    model.ChargingStorages = pm.Constraint(model.cells_set, model.time_horizons_set, model.time_set,
                                            rule=charge_storages)
     model.ResidualLoad = pm.Constraint(model.cells_set, model.time_set, rule=meet_residual_load)
     model.MaximumCharging = pm.Constraint(model.cells_set, model.time_horizons_set, model.time_set,
@@ -226,6 +237,39 @@ def minimize_energy_multi(model):
     return sum(sum(model.weighting[time_horizon] * sum(model.abs_charging[cell, time_horizon, time]
                                                    for time in model.time_set)
                for time_horizon in model.time_horizons_set) for cell in model.cells_set)
+
+
+def determine_storage_durations(charging, index="duration"):
+    """
+    Method to determine medium storage duration of stored energy.
+
+    :param charging: pd.DataFrame
+        Charging timeseries of the different storage types. Index should be
+        datetimeindex and columns storage types. The charging time series of a storage
+        type should amount to 0 in total
+    :return:
+    """
+
+    def get_mean_shifting_time(sdi):
+        """
+        Method to extract mean storage duration
+        :param sdi: see output shifting time
+        :return:
+        """
+        sdi["storage_duration_numerical"] = sdi.storage_duration.divide(
+            pd.to_timedelta("1h"))
+        mean_time_shift = (
+                                      sdi.storage_duration_numerical * sdi.energy_shifted.abs()).sum() / sdi.energy_shifted.abs().sum()
+        return mean_time_shift * pd.to_timedelta("1h")
+    if (charging.sum() > 1e-5).any():
+        print("Warning: charging time series do not amount to 0.")
+    if type(index) in [str, float, int]:
+        index = [index]
+    storage_durations = pd.DataFrame(index=index, columns=charging.columns)
+    for storage_type in charging.columns:
+        sdi = shifting_time(charging[storage_type])
+        storage_durations.loc[index, storage_type] = get_mean_shifting_time(sdi)
+    return storage_durations
 
 
 if __name__ == "__main__":
