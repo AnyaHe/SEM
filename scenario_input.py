@@ -39,7 +39,7 @@ def scenario_input_hps(scenario_dict={}, mode="inflexible", timesteps=None):
     """
     heat_demand_single_hp = 21.5 * 1e-3  # GWh
     if timesteps is None:
-        if hasattr(scenario_dict, "ts_demand"):
+        if "ts_demand" in scenario_dict.keys():
             timesteps = scenario_dict["ts_demand"].index
         else:
             timesteps = pd.date_range("1/1/2011 00:00", periods=8760, freq="H")
@@ -51,21 +51,22 @@ def scenario_input_hps(scenario_dict={}, mode="inflexible", timesteps=None):
         "ts_timesteps": timesteps,
         "hp_dir": r"C:\Users\aheider\Documents\Software\Cost-functions\distribution-grid-expansion-cost-functions\data"
     })
-    cop, heat_demand = get_heat_pump_timeseries_data(scenario_dict["hp_dir"], scenario_dict)
+    heat_demand, cop = \
+        get_heat_pump_timeseries_data(scenario_dict["hp_dir"], scenario_dict)
     scenario_dict.update({
         "hp_mode": mode,
         "capacity_single_tes": 0.0183 * 1e-3,  # GWh
         "p_nom_single_hp": 0.013 * 1e-3,  # GW
         "heat_demand_single_hp": heat_demand_single_hp,  # GWh
         "ts_heat_demand_single_hp":
-            heat_demand / heat_demand.sum() * heat_demand_single_hp,  # GWh
-        "ts_cop": cop,
+            (heat_demand / heat_demand.sum() * heat_demand_single_hp).loc[timesteps],  # GWh
+        "ts_cop": cop.loc[timesteps],
     })
     return scenario_dict
 
 
 def scenario_input_evs(scenario_dict={}, mode="inflexible",
-                       use_cases_flexible=None, extended_flex=False):
+                       use_cases_flexible=None, extended_flex=False, timesteps=None):
     """
     Method to add relevant information on modelled evs
     :param scenario_dict: dict
@@ -82,6 +83,11 @@ def scenario_input_evs(scenario_dict={}, mode="inflexible",
     """
     if use_cases_flexible is None:
         use_cases_flexible = ["home", "work"]
+    if timesteps is None:
+        if "ts_demand" in scenario_dict.keys():
+            timesteps = scenario_dict["ts_demand"].index
+        else:
+            timesteps = pd.date_range("1/1/2011 00:00", periods=8760, freq="H")
     # set time increment if not already included in the scenario dictionary
     time_increment = scenario_dict.get("time_increment", "1h")
     scenario_dict["time_increment"] = time_increment
@@ -98,16 +104,18 @@ def scenario_input_evs(scenario_dict={}, mode="inflexible",
             else:
                 flex_bands[band] = pd.read_csv(f"data/{band}_flex++.csv", index_col=0,
                                                parse_dates=True) / 1e3
-                nr_ev_ref = 26880 # Todo: adapt
+                nr_ev_ref = 26837
             if "power" in band:
-                flex_bands[band] = flex_bands[band].resample(time_increment).mean()
+                flex_bands[band] = \
+                    flex_bands[band].resample(time_increment).mean().loc[timesteps]
             elif "energy" in band:
-                flex_bands[band] = flex_bands[band].resample(time_increment).max()
+                flex_bands[band] = \
+                    flex_bands[band].resample(time_increment).max().loc[timesteps]
         scenario_dict.update({"ts_flex_bands": flex_bands})
     scenario_dict.update({
         "ev_mode": mode,
         "use_cases_flexible": use_cases_flexible,
-        "ts_ref_charging": ref_charging,
+        "ts_ref_charging": ref_charging.loc[timesteps],
         "nr_ev_ref": nr_ev_ref,
         "extended_flex": extended_flex,
     })
