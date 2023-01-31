@@ -37,9 +37,13 @@ def scale_heat_pumps(nr_hp_mio, scenario_dict):
 
 
 def add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, heat_demand):
+    def energy_conversion_hp(model, time):
+        return model.charging_hp_el[time] * cop.loc[model.timeindex[time]] == \
+            model.charging_hp_th[time]
+
     def energy_balance_hp_tes(model, time):
-        return model.charging_hp_el[time] * cop.loc[time] == \
-               model.heat_demand.loc[time, 0] + model.charging_tes[time]
+        return model.charging_hp_th[time] == \
+               model.heat_demand.loc[model.timeindex[time]] + model.charging_tes[time]
 
     def fixed_energy_level_tes(model, time):
         return model.energy_tes[time] == model.capacity_tes/2
@@ -56,11 +60,59 @@ def add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, heat_demand):
     # set up variables
     model.energy_tes = pm.Var(model.time_set, bounds=(0, capacity_tes))
     model.charging_tes = pm.Var(model.time_set)
-    model.charging_hp_el = pm.Var(model.time_set, bounds=(0, p_nom_hp))
+    model.charging_hp_th = pm.Var(model.time_set, bounds=(0, p_nom_hp))
+    model.charging_hp_el = pm.Var(model.time_set)
     # add constraints
+    model.EnergyConversionHP = pm.Constraint(model.time_set, rule=energy_conversion_hp)
     model.EnergyBalanceHPTES = pm.Constraint(model.time_set, rule=energy_balance_hp_tes)
     model.FixedEnergyTES = pm.Constraint(model.times_fixed_soc, rule=fixed_energy_level_tes)
     model.ChargingTES = pm.Constraint(model.time_non_zero, rule=charging_tes)
+    return model
+
+
+def add_hp_energy_level(model, mode="minimize", energy_consumption=None):
+    """
+    Method to add overall energy level. Used to determine maximum and minimum energy
+    band. The energy is the cumulated consumed electrical energy.
+
+    :param model: Model with already added heat pump model
+    :param mode: str
+        Can be "minimize" or "maximize", determines which band to calculate, the lower
+        energy band ("minimize") or the upper energy band ("maximize")
+    :return: updated model
+    """
+    def initial_cumulated_energy_level(model, time):
+        """
+        Set initial energy level to 0
+        """
+        return model.energy_level[time] == 0
+    def cumulated_energy_level(model, time):
+        """
+        Define charging of energy level
+        """
+        return model.energy_level[time] == model.energy_level[time-1] + \
+               model.charging_hp_el[time] * \
+               (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
+    def energy_level_end(model, time):
+        return model.energy_level[time] == energy_consumption
+    def energy_level_hp(model):
+        """
+        Objective
+        """
+        return sum(model.energy_level[time] for time in model.time_set)
+    # add new variable
+    model.energy_level = pm.Var(model.time_set, bounds=(0, None))
+    # add new constraints
+    model.InitialEnergyLevel = pm.Constraint([model.time_set.at(1)],
+                                             rule=initial_cumulated_energy_level)
+    model.EnergyLevel = pm.Constraint(model.time_non_zero, rule=cumulated_energy_level)
+    if energy_consumption is not None:
+        model.EnergyLevelEnd = pm.Constraint([model.time_set.at(-1)],
+                                             rule=energy_level_end)
+    # add objective
+    model.objective = pm.Objective(rule=energy_level_hp,
+                                   sense=getattr(pm, mode),
+                                   doc='Define objective function')
     return model
 
 
@@ -74,10 +126,15 @@ def reduced_operation(model):
 
 if __name__ == "__main__":
     solver = "gurobi"
-    nr_hp = 2983
+    nr_hp = 20*1e6
+    objective = "maximize_energy_level"
     heat_demand = pd.read_csv(r"C:\Users\aheider\Documents\Software\Semester Project Scripts\Scripts and Data\grids\176\hp_heat_2011.csv",
                               header=None)
-    cop = pd.read_csv(r'C:\Users\aheider\Documents\Software\Semester Project Scripts\Scripts and Data\grids\176\COP_2011.csv')
+    # heat_demand = pd.concat([heat_demand_orig[5500:], heat_demand_orig[:5500]])
+    # heat_demand.index = heat_demand_orig.index
+    cop = pd.read_csv(r'C:\Users\aheider\Documents\Software\Semester Project Scripts\Scripts and Data\grids\176\COP_2011.csv')["COP 2011"]
+    # cop = pd.concat([cop_orig[5500:], cop_orig[:5500]])
+    # cop.index = cop_orig.index
     hp_data = scenario_input_hps()
     capacity_tes = nr_hp * hp_data["capacity_single_tes"] # MWh
     p_nom_hp = nr_hp * hp_data["p_nom_single_hp"] # MW
@@ -88,13 +145,27 @@ if __name__ == "__main__":
                                                model.time_set.at(-1)])
     model.time_increment = pd.to_timedelta('1h')
     model = add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, heat_demand)
-    model.objective = pm.Objective(rule=reduced_operation,
-                                   sense=pm.minimize,
-                                   doc='Define objective function')
+    if objective == "reduced_operation":
+        model.objective = pm.Objective(rule=reduced_operation,
+                                       sense=pm.minimize,
+                                       doc='Define objective function')
+    elif (objective == "minimize_energy_level") or \
+        (objective == "maximize_energy_level"):
+        if "minimize" in objective:
+            model = add_hp_energy_level(model, "minimize")#, energy_consumption=10639.094336
+        elif "maximize" in objective:
+            model = add_hp_energy_level(model, "maximize")#, energy_consumption=10639.094336
+        else:
+            raise ValueError("Define whether energy level should be minimized or "
+                             "maximised.")
     opt = pm.SolverFactory(solver)
     results = opt.solve(model, tee=True)
     results_df = pd.DataFrame()
     results_df["charging_hp"] = pd.Series(model.charging_hp_el.extract_values())
     results_df["charging_tes"] = pd.Series(model.charging_tes.extract_values())
     results_df["energy_tes"] = pd.Series(model.energy_tes.extract_values())
+    if (objective == "minimize_energy_level") or \
+         (objective == "maximize_energy_level"):
+        results_df["energy_level"] = pd.Series(model.energy_level.extract_values())
+        results_df["energy_level"].to_csv(f"data/{objective}.csv")
     print("SUCCESS")

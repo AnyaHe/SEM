@@ -18,17 +18,20 @@ def get_heat_pump_timeseries_data(data_dir, scenario_dict):
         needs entries for cop, see use :func:`merge_cop_heat_pumps` for required keys
     :return: scaled_cop
     """
+    # load input data from when2heat
     hp_path = os.path.join(data_dir, "when2heat.csv")
     profiles_hp = pd.read_csv(hp_path, sep=';', decimal=",", index_col=0,
                               parse_dates=True)
     timesteps = scenario_dict["ts_timesteps"]
     profiles_hp = profiles_hp.loc[timesteps.tz_localize("UTC")]
-    # calculate heat_demand
+    # calculate heat_demand and set right timeindex
     heat_demand = sum([
         profiles_hp[f"DE_heat_demand_space_{building}"]for building in ["SFH", "MFH"]
     ])
-    # calculate cop
+    heat_demand.index = timesteps
+    # calculate cop and set right timeindex
     cop = merge_cop_heat_pumps(profiles_hp, scenario_dict)
+    cop.index = timesteps
     return heat_demand, cop
 
 
