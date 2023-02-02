@@ -48,7 +48,8 @@ def determine_all_shifting_events_for_single_timeindex(amount_to_shift,
                                                        energy_imbalance,
                                                        storage_equivalent,
                                                        timestep,
-                                                       available_shifting):
+                                                       available_shifting,
+                                                       tol=1e-9):
     """
     Method to determine required shifting by checking the next available
     points in time with opposite sign.
@@ -58,6 +59,8 @@ def determine_all_shifting_events_for_single_timeindex(amount_to_shift,
     :param storage_equivalent:
     :param timestep:
     :param available_shifting:
+    :param tol: float
+        Tolerance - values below tolerance will be treated as 0
     :return:
     """
     # Handling of last timestep
@@ -69,9 +72,9 @@ def determine_all_shifting_events_for_single_timeindex(amount_to_shift,
                 amount_to_shift))
         return storage_equivalent, energy_imbalance
     # Intermediate timesteps
-    if amount_to_shift > 0:
+    if amount_to_shift > tol:
         usable_cumulative_shifting = \
-            available_shifting.loc[available_shifting < 0].cumsum()
+            available_shifting.loc[available_shifting < -tol].cumsum()
         if len(usable_cumulative_shifting) == 1:
             number_of_shifts = 1
         else:
@@ -81,9 +84,9 @@ def determine_all_shifting_events_for_single_timeindex(amount_to_shift,
             usable_cumulative_shifting.iloc[:number_of_shifts]
         deficit_indices = cumulative_shifting.index
         surplus_indices = [timestep] * len(deficit_indices)
-    else:
+    elif amount_to_shift < -tol:
         usable_cumulative_shifting = \
-            available_shifting.loc[available_shifting > 0].cumsum()
+            available_shifting.loc[available_shifting > tol].cumsum()
         if len(usable_cumulative_shifting) == 1:
             number_of_shifts = 1
         else:
@@ -93,10 +96,13 @@ def determine_all_shifting_events_for_single_timeindex(amount_to_shift,
             usable_cumulative_shifting.iloc[:number_of_shifts]
         surplus_indices = cumulative_shifting.index
         deficit_indices = [timestep] * len(surplus_indices)
+    else:
+        print(f"Skipping small amount to shift: {amount_to_shift}.")
+        return storage_equivalent, energy_imbalance
 
     storage_duration = cumulative_shifting.index - timestep
     if (storage_duration < pd.to_timedelta(0)).any():
-        print('DEBUG: check this.')
+        raise ValueError("Negative shifting time determined. Please check.")
     # update energy imbalance
     energy_imbalance.loc[timestep, 'used_amount'] = \
         energy_imbalance.loc[timestep, 'used_amount'] + amount_to_shift
