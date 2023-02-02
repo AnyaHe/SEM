@@ -200,9 +200,13 @@ def scale_electric_vehicles(nr_ev_mio, scenario_dict):
     flex_bands = {}
     if scenario_dict["ev_mode"] == "flexible":
         for band in ["upper_power", "upper_energy", "lower_energy"]:
-            flex_bands[band] = scenario_dict["ts_flex_bands"][band].divide(
-                scenario_dict["nr_ev_ref"]).multiply(nr_ev)[
-                scenario_dict["use_cases_flexible"]]
+            if not scenario_dict["ev_extended_flex"]:
+                flex_bands[band] = scenario_dict["ts_flex_bands"][band].divide(
+                    scenario_dict["nr_ev_ref"]).multiply(nr_ev)[
+                    scenario_dict["use_cases_flexible"]]
+            else:
+                flex_bands[band] = scenario_dict["ts_flex_bands"][band].divide(
+                    scenario_dict["nr_ev_ref"]).multiply(nr_ev)
     return ref_charging, flex_bands
 
 
