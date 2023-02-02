@@ -154,10 +154,16 @@ def adjust_timeseries_data(scenario_dict):
     :return:
     """
     def shift_and_extend_ts_by_one_timestep(ts, time_increment="1h", value=0):
-        ts = pd.concat([pd.Series(
-            index=[ts.index[0] - pd.to_timedelta(
-                time_increment)],
-            data=value), ts])
+        if isinstance(value, pd.Series):
+            ts_first = pd.DataFrame(
+                columns=[ts.index[0] - pd.to_timedelta(time_increment)],
+                index=value.index,
+                data=value.values).T
+        else:
+            ts_first = pd.Series(
+                index=[ts.index[0] - pd.to_timedelta(time_increment)],
+                data=value)
+        ts = pd.concat([ts_first, ts])
         ts.index = \
             ts.index + pd.to_timedelta(time_increment)
         return ts
