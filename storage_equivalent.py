@@ -18,8 +18,7 @@ def set_up_base_model(scenario_dict, new_res_load):
     model.timeindex = scenario_dict["ts_timesteps"]
     model.time_set = pm.RangeSet(0, len(new_res_load) - 1)
     model.time_increment = pd.to_timedelta(scenario_dict["time_increment"])
-    model.times_fixed_soc = pm.Set(initialize=[model.time_set.at(1),
-                                               model.time_set.at(-1)])
+    model.times_fixed_soc = pm.Set(initialize=[model.time_set.at(-1)])
     model.weighting = scenario_dict["weighting"]
     return model
 

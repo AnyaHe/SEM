@@ -72,9 +72,13 @@ def add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, heat_demand):
         return model.energy_tes[time] == model.capacity_tes/2
 
     def charging_tes(model, time):
+        if time == 0:
+            energy_pre = model.capacity_tes/2
+        else:
+            energy_pre = model.energy_tes[time-1]
         return model.energy_tes[time] == \
-               model.energy_tes[time-1] + model.charging_tes[time] * \
-               (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
+            energy_pre + model.charging_tes[time] * \
+            (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
     # save fix parameters
     model.capacity_tes = capacity_tes
     model.p_nom_hp = p_nom_hp
@@ -89,7 +93,7 @@ def add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, heat_demand):
     model.EnergyConversionHP = pm.Constraint(model.time_set, rule=energy_conversion_hp)
     model.EnergyBalanceHPTES = pm.Constraint(model.time_set, rule=energy_balance_hp_tes)
     model.FixedEnergyTES = pm.Constraint(model.times_fixed_soc, rule=fixed_energy_level_tes)
-    model.ChargingTES = pm.Constraint(model.time_non_zero, rule=charging_tes)
+    model.ChargingTES = pm.Constraint(model.time_set, rule=charging_tes)
     return model
 
 

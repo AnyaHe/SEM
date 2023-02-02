@@ -15,11 +15,16 @@ def add_ev_model(model, flex_bands, efficiency=0.9):
         :param time:
         :return:
         """
+        if time == 0:
+            energy_level_pre = \
+                (model.flex_bands.loc[time, "lower"] +
+                 model.flex_bands.loc[time, "upper"]) / 2
+        else:
+            energy_level_pre = model.energy_level_ev[time - 1]
         return model.energy_level_ev[time] == \
-               model.energy_level_ev[time - 1] + \
-               model.charging_efficiency * \
-               model.charging_ev[time] * \
-               (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
+            energy_level_pre + \
+            model.charging_efficiency * model.charging_ev[time] * \
+            (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
 
     def fixed_energy_level(model, time):
         '''
@@ -30,7 +35,8 @@ def add_ev_model(model, flex_bands, efficiency=0.9):
         :return:
         '''
         return model.energy_level_ev[time] == \
-               (model.flex_bands.loc[time, "lower"] + model.flex_bands.loc[time, "upper"]) / 2
+            (model.flex_bands.loc[time, "lower"] +
+             model.flex_bands.loc[time, "upper"]) / 2
     # save fix parameters
     model.charging_efficiency = efficiency
     model.flex_bands = flex_bands
@@ -61,11 +67,15 @@ def add_evs_model(model, flex_bands, efficiency=0.9):
         :param time:
         :return:
         """
+        if time == 0:
+            energy_level_pre = (model.flex_bands["lower_energy"].iloc[time][cp] +
+                                model.flex_bands["upper_energy"].iloc[time][cp]) / 2
+        else:
+            energy_level_pre = model.energy_level_ev[cp, time - 1]
         return model.energy_level_ev[cp, time] == \
-               model.energy_level_ev[cp, time - 1] + \
-               model.charging_efficiency * \
-               model.charging_ev[cp, time] * \
-               (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
+            energy_level_pre + \
+            model.charging_efficiency * model.charging_ev[cp, time] * \
+            (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
 
     def fixed_energy_level(model, cp, time):
         '''
