@@ -6,6 +6,24 @@ import matplotlib.pyplot as plt
 from quantification.flexibility_quantification import shifting_time
 
 
+def set_up_base_model(scenario_dict, new_res_load):
+    """
+    Method to set up base optimisation model
+
+    :param scenario_dict:
+    :param new_res_load:
+    :return:
+    """
+    model = pm.ConcreteModel()
+    model.timeindex = scenario_dict["ts_timesteps"]
+    model.time_set = pm.RangeSet(0, len(new_res_load) - 1)
+    model.time_increment = pd.to_timedelta(scenario_dict["time_increment"])
+    model.times_fixed_soc = pm.Set(initialize=[model.time_set.at(1),
+                                               model.time_set.at(-1)])
+    model.weighting = scenario_dict["weighting"]
+    return model
+
+
 def add_storage_equivalent_model(model, residual_load, **kwargs):
     def fix_energy_levels(model, time_horizon, time):
         return model.energy_levels[time_horizon, time] == 0
@@ -258,8 +276,9 @@ def determine_storage_durations(charging, index="duration"):
         """
         sdi["storage_duration_numerical"] = sdi.storage_duration.divide(
             pd.to_timedelta("1h"))
-        mean_time_shift = (
-                                      sdi.storage_duration_numerical * sdi.energy_shifted.abs()).sum() / sdi.energy_shifted.abs().sum()
+        mean_time_shift = \
+            (sdi.storage_duration_numerical * sdi.energy_shifted.abs()).sum() / \
+            sdi.energy_shifted.abs().sum()
         return mean_time_shift * pd.to_timedelta("1h")
     if (charging.sum() > 1e-5).any():
         print("Warning: charging time series do not amount to 0.")
@@ -267,7 +286,7 @@ def determine_storage_durations(charging, index="duration"):
         index = [index]
     storage_durations = pd.DataFrame(index=index, columns=charging.columns)
     for storage_type in charging.columns:
-        sdi = shifting_time(charging[storage_type])
+        sdi = shifting_time(charging[storage_type], reference_curve=0)
         storage_durations.loc[index, storage_type] = get_mean_shifting_time(sdi)
     return storage_durations
 

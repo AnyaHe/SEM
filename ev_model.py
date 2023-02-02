@@ -210,6 +210,42 @@ def scale_electric_vehicles(nr_ev_mio, scenario_dict):
     return ref_charging, flex_bands
 
 
+def model_input_evs(scenario_dict, ev_mode, i=None, nr_ev_mio=None):
+    if ev_mode is not None:
+        # determine number of evs
+        if i is not None:
+            if nr_ev_mio is not None:
+                print("Both i and nr_ev_mio are defined, nr_ev_mio will be used.")
+            else:
+                nr_ev_mio = i * 5
+        else:
+            if nr_ev_mio is None:
+                raise ValueError("Either i or nr_ev_mio have to be provided.")
+        # scale input accordingly
+        (reference_charging, flexibility_bands) = scale_electric_vehicles(
+            nr_ev_mio, scenario_dict)
+        if ev_mode == "flexible":
+            use_cases_inflexible = reference_charging.columns[
+                ~reference_charging.columns.isin(scenario_dict["use_cases_flexible"])]
+            energy_ev = \
+                reference_charging[use_cases_inflexible].sum().sum() + \
+                (flexibility_bands["upper_energy"].sum(axis=1)[
+                     -1] +
+                 flexibility_bands["lower_energy"].sum(axis=1)[
+                     -1]) / 0.9 / 2
+            ref_charging = reference_charging[use_cases_inflexible].sum(axis=1)
+        else:
+            energy_ev = reference_charging.sum().sum()
+            ref_charging = reference_charging.sum(axis=1)
+            flexibility_bands = {}
+    else:
+        nr_ev_mio = 0
+        energy_ev = 0
+        ref_charging = pd.Series(index=scenario_dict["ts_demand"].index, data=0)
+        flexibility_bands = {}
+    return nr_ev_mio, flexibility_bands, energy_ev, ref_charging
+
+
 def reduced_operation(model):
     return sum(model.charging_ev[time]**2 for time in model.time_set)
 

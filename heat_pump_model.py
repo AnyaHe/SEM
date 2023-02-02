@@ -36,6 +36,29 @@ def scale_heat_pumps(nr_hp_mio, scenario_dict):
     return capacity_tes, p_nom_hp, ts_heat_demand, ts_heat_el, sum_energy_heat
 
 
+def model_input_hps(scenario_dict, hp_mode, i=None, nr_hp_mio=None):
+    if hp_mode is not None:
+        # determine number of hps
+        if i is not None:
+            if nr_hp_mio is not None:
+                print("Both i and nr_hp_mio are defined, nr_hp_mio will be used.")
+            else:
+                nr_hp_mio = i * 5
+        else:
+            if nr_hp_mio is None:
+                raise ValueError("Either i or nr_hp_mio have to be provided.")
+        (capacity_tes, p_nom_hp,
+         ts_heat_demand, ts_heat_el, sum_energy_heat) = \
+            scale_heat_pumps(nr_hp_mio=nr_hp_mio,
+                             scenario_dict=scenario_dict)
+    else:
+        ts_heat_el = pd.Series(index=scenario_dict["ts_demand"].index, data=0)
+        sum_energy_heat, nr_hp_mio, capacity_tes, p_nom_hp, ts_heat_demand = \
+            (0, 0, 0, 0, 0)
+    return \
+        nr_hp_mio, ts_heat_el, sum_energy_heat, capacity_tes, p_nom_hp, ts_heat_demand
+
+
 def add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, heat_demand):
     def energy_conversion_hp(model, time):
         return model.charging_hp_el[time] * cop.loc[model.timeindex[time]] == \
@@ -94,6 +117,9 @@ def add_hp_energy_level(model, mode="minimize", energy_consumption=None):
                model.charging_hp_el[time] * \
                (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
     def energy_level_end(model, time):
+        """
+        Fixing overall energy consumption
+        """
         return model.energy_level[time] == energy_consumption
     def energy_level_hp(model):
         """

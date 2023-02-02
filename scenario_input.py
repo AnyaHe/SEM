@@ -94,30 +94,31 @@ def scenario_input_evs(scenario_dict={}, mode="inflexible",
     ref_charging = (pd.read_csv(
         r"data/ref_charging_use_case.csv", index_col=0, parse_dates=True) / 1e3).resample(
         scenario_dict["time_increment"]).mean() # GW
+    nr_ev_ref = 26880  # from SEST
     if mode == "flexible":
         flex_bands = {}
         for band in ["upper_power", "upper_energy", "lower_energy"]:
             if not extended_flex:
                 flex_bands[band] = pd.read_csv(f"data/{band}_flex+.csv", index_col=0,
                                                parse_dates=True) / 1e3
-                nr_ev_ref = 26880 # from SEST
             else:
                 flex_bands[band] = pd.read_csv(f"data/{band}_flex++.csv", index_col=0,
                                                parse_dates=True) / 1e3
-                nr_ev_ref = 26837
+                # nr_ev_ref = 26837
             if "power" in band:
                 flex_bands[band] = \
                     flex_bands[band].resample(time_increment).mean().loc[timesteps]
             elif "energy" in band:
                 flex_bands[band] = \
                     flex_bands[band].resample(time_increment).max().loc[timesteps]
-        scenario_dict.update({"ts_flex_bands": flex_bands})
+        scenario_dict.update({
+            "ts_flex_bands": flex_bands})
     scenario_dict.update({
         "ev_mode": mode,
         "use_cases_flexible": use_cases_flexible,
         "ts_ref_charging": ref_charging.loc[timesteps],
         "nr_ev_ref": nr_ev_ref,
-        "extended_flex": extended_flex,
+        "ev_extended_flex": extended_flex,
     })
     return scenario_dict
 
@@ -145,3 +146,76 @@ def save_scenario_dict(scenario_dict, res_dir):
             'w', encoding='utf-8') as f:
         json.dump(scenario_dict, f, ensure_ascii=False, indent=4)
 
+
+def adjust_timeseries_data(scenario_dict):
+    """
+    Method to shift all timeseries by one timestep to make sure storage units end at 0
+    :param scenario_dict:
+    :return:
+    """
+    def shift_and_extend_ts_by_one_timestep(ts, time_increment="1h", value=0):
+        ts = pd.concat([pd.Series(
+            index=[ts.index[0] - pd.to_timedelta(
+                time_increment)],
+            data=value), ts])
+        ts.index = \
+            ts.index + pd.to_timedelta(time_increment)
+        return ts
+
+    for key in scenario_dict.keys():
+        if key.startswith("ts_"):
+            if (key == "ts_initial") or (key == "ts_timesteps"):
+                pass
+            elif key == "ts_cop":
+                scenario_dict[key] = \
+                    shift_and_extend_ts_by_one_timestep(
+                        scenario_dict[key], scenario_dict["time_increment"],
+                        value=1)
+            elif key == "ts_flex_bands":
+                for band in scenario_dict[key].keys():
+                    scenario_dict[key][band] = \
+                        shift_and_extend_ts_by_one_timestep(
+                            scenario_dict[key][band],
+                            scenario_dict["time_increment"],
+                            value=scenario_dict[key][band].iloc[0]
+                        )
+            else:
+                scenario_dict[key] = \
+                    shift_and_extend_ts_by_one_timestep(
+                        scenario_dict[key], scenario_dict["time_increment"],
+                        value=0)
+    scenario_dict["ts_timesteps"] = scenario_dict["ts_demand"].index
+    return scenario_dict
+
+
+def get_new_residual_load(scenario_dict, share_pv=None, sum_energy_heat=0, energy_ev=0,
+                          ref_charging=None, ts_heat_el=None) :
+    """
+    Method to calculate new residual load for input into storage equivalent model.
+
+    :param scenario_dict:
+    :param sum_energy_heat:
+    :param energy_ev:
+    :return:
+    """
+
+    sum_energy = scenario_dict["ts_demand"].sum().sum()
+    if ref_charging is None:
+        ref_charging = pd.Series(index=scenario_dict["ts_demand"].index, data=0)
+    if ts_heat_el is None:
+        ts_heat_el = pd.Series(index=scenario_dict["ts_demand"].index, data=0)
+    if share_pv is None:
+        scaled_ts_reference = scenario_dict["ts_vres"].divide(
+            scenario_dict["ts_vres"].sum().sum())
+    else:
+        scaled_ts_reference = \
+            scenario_dict["ts_vres"].divide(scenario_dict["ts_vres"].sum())
+        scaled_ts_reference["solar"] = scaled_ts_reference["solar"] * share_pv
+        scaled_ts_reference["wind"] = scaled_ts_reference["wind"] * (1 - share_pv)
+    vres = scaled_ts_reference * (sum_energy + sum_energy_heat + energy_ev)
+    new_res_load = \
+        scenario_dict["ts_demand"].sum(axis=1) + ref_charging - vres.sum(axis=1)
+    if scenario_dict["hp_mode"] != "flexible":
+        new_res_load = new_res_load + \
+                       ts_heat_el
+    return new_res_load
