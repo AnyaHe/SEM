@@ -46,7 +46,8 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
         else:
             ev = 0
         return sum(model.charging[time_horizon, time] for time_horizon in
-                   model.time_horizons_set) == \
+                   model.time_horizons_set) + model.slack_res_load_pos[time] - \
+            model.slack_res_load_neg[time] == \
             model.residual_load.iloc[time] + hp_el + ev
 
     def maximum_charging(model, time_horizon, time):
@@ -88,6 +89,8 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
     model.charging = pm.Var(model.time_horizons_set, model.time_set)
     model.charging_max = pm.Var(model.time_horizons_set)
     model.abs_charging = pm.Var(model.time_horizons_set, model.time_set)
+    model.slack_res_load_pos = pm.Var(model.time_set, bounds=(0, None))
+    model.slack_res_load_neg = pm.Var(model.time_set, bounds=(0, None))
     # add constraints
     for time_horizon in model.time_horizons_set:
         times = []
@@ -137,9 +140,11 @@ def add_storage_equivalents_model(model, residual_load, connections, flows, **kw
         neg_flows = cell_connections.loc[cell_connections == -1].index
         return sum(model.charging[cell, time_horizon, time] for time_horizon in
                    model.time_horizons_set) + \
-               sum(model.flows[(cell, neighbor), time] for neighbor in pos_flows) - \
-               sum(model.flows[(neighbor, cell), time] for neighbor in neg_flows) == \
-               model.residual_load[cell].iloc[time]
+            sum(model.flows[(cell, neighbor), time] for neighbor in pos_flows) - \
+            sum(model.flows[(neighbor, cell), time] for neighbor in neg_flows) + \
+            model.slack_res_load_pos[time] - \
+            model.slack_res_load_neg[time] == \
+            model.residual_load[cell].iloc[time]
 
     def maximum_charging(model, cell, time_horizon, time):
         return model.charging_max[cell, time_horizon] >= \
@@ -191,6 +196,8 @@ def add_storage_equivalents_model(model, residual_load, connections, flows, **kw
     model.charging_max = pm.Var(model.cells_set, model.time_horizons_set)
     model.abs_charging = pm.Var(model.cells_set, model.time_horizons_set, model.time_set)
     model.flows = pm.Var(model.flows_set, model.time_set)
+    model.slack_res_load_pos = pm.Var(model.time_set, bounds=(0, None))
+    model.slack_res_load_neg = pm.Var(model.time_set, bounds=(0, None))
     # add constraints
     for time_horizon in model.time_horizons_set:
         times = []
@@ -220,19 +227,30 @@ def add_storage_equivalents_model(model, residual_load, connections, flows, **kw
     return model
 
 
+def get_slacks(model):
+    return sum(model.slack_res_load_neg[time] + model.slack_res_load_neg[time]
+               for time in model.time_set)
+
+
 def minimize_cap(model):
+    # todo: determine good weighting factor
+    slacks = get_slacks(model) * 1e6
     return sum(model.weighting[time_horizon] * (model.caps_pos[time_horizon] +
                                                 model.caps_neg[time_horizon])
-               for time_horizon in model.time_horizons_set)
+               for time_horizon in model.time_horizons_set) + slacks
 
 
 def minimize_energy(model):
+    # todo: determine good weighting factor
+    slacks = get_slacks(model) * 1e6
     return sum(model.weighting[time_horizon] * sum(model.abs_charging[time_horizon, time]
                                                    for time in model.time_set)
-               for time_horizon in model.time_horizons_set)
+               for time_horizon in model.time_horizons_set) + slacks
 
 
 def minimize_energy_and_power(model):
+    # todo: determine good weighting factor
+    slacks = get_slacks(model) * 1e6
     if hasattr(model, "charging_hp_el") and (model.p_nom_hp > 0):
         hp_el = sum([(model.charging_hp_el[time]/model.p_nom_hp)**2
                      for time in model.time_set])
@@ -247,13 +265,17 @@ def minimize_energy_and_power(model):
     return sum(
         model.weighting[time_horizon] * sum(model.abs_charging[time_horizon, time]
                                             for time in model.time_set)
-        for time_horizon in model.time_horizons_set)+1e-9*(hp_el+ev)
+        for time_horizon in model.time_horizons_set)+1e-9*(hp_el+ev)+slacks
 
 
 def minimize_energy_multi(model):
-    return sum(sum(model.weighting[time_horizon] * sum(model.abs_charging[cell, time_horizon, time]
-                                                   for time in model.time_set)
-               for time_horizon in model.time_horizons_set) for cell in model.cells_set)
+    # todo: determine good weighting factor
+    slacks = get_slacks(model) * 1e6
+    return sum(sum(model.weighting[time_horizon] *
+                   sum(model.abs_charging[cell, time_horizon, time]
+                       for time in model.time_set)
+               for time_horizon in model.time_horizons_set) for
+               cell in model.cells_set) + slacks
 
 
 def determine_storage_durations(charging, index="duration"):
