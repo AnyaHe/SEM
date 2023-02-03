@@ -14,11 +14,11 @@ if __name__ == "__main__":
     storage_type = 0
     scenario = f"EV_flexible_reduction_{storage_type}"
     reference_scenario = "EV_reference"
-    extract_storage_duration = True
+    extract_storage_duration = False
     plot_results = False
     solver = "gurobi"
-    hp_mode = "flexible" # None, "flexible", "inflexible"
-    ev_mode = None # None, "flexible", "inflexible"
+    ev_mode = "flexible" # None, "flexible", "inflexible"
+    hp_mode = None # None, "flexible", "inflexible"
     tes_relative_size = 1 # in share standard
     ev_extended_flex = False
     flexible_ev_use_cases = ["home", "work", "public"]
@@ -36,7 +36,10 @@ if __name__ == "__main__":
     scenario_dict["hp_mode"] = hp_mode
     scenario_dict["ev_mode"] = ev_mode
     scenario_dict["solver"] = solver
-    # scenario_dict["weighting"] = weights
+    # let only examined storage horizon "cost" something in objective
+    weights_adjusted = [scenario_dict["weighting"][th] if th == storage_type else 0
+                        for th in range(len(scenario_dict["time_horizons"]))]
+    scenario_dict["weighting"] = weights_adjusted
     if hp_mode is not None:
         scenario_dict = scenario_input_hps(scenario_dict=scenario_dict, mode=hp_mode)
         scenario_dict["capacity_single_tes"] = \
@@ -73,11 +76,12 @@ if __name__ == "__main__":
             energy_ev=energy_ev,
             ref_charging=ref_charging,
             ts_heat_el=ts_heat_el)
-        # subtract charging of other storage types
+        # get shifted energy from other storage units
         charging_ref = pd.read_csv(f"{res_dir_ref}/charging_{i}.csv", index_col=0,
                                    parse_dates=True)
-        new_res_load = new_res_load - charging_ref[
-            charging_ref.columns[charging_ref.columns != str(storage_type)]].sum(axis=1)
+        charging_ref.columns = [int(col) for col in charging_ref.columns]
+        shifted_enery_ref = charging_ref[
+            charging_ref.columns[charging_ref.columns != storage_type]].abs().sum()
         # initialise base model
         model = se.set_up_base_model(scenario_dict=scenario_dict,
                                      new_res_load=new_res_load)
@@ -91,7 +95,8 @@ if __name__ == "__main__":
         # add storage equivalents
         model = se.add_storage_equivalent_model(
             model, new_res_load,
-            time_horizons=[scenario_dict["time_horizons"][storage_type]])
+            time_horizons=scenario_dict["time_horizons"],
+            fixed_shifted_energy=shifted_enery_ref)
         # define objective
         model.objective = pm.Objective(rule=getattr(se, scenario_dict["objective"]),
                                        sense=pm.minimize,
@@ -107,6 +112,10 @@ if __name__ == "__main__":
         slacks = pd.Series(model.slack_res_load_neg.extract_values()) + \
                  pd.Series(model.slack_res_load_pos.extract_values())
         if slacks.sum() > 1e-9:
+            raise ValueError("Slacks are being used. Please check. Consider increasing "
+                             "weights.")
+        slacks_energy = pd.Series(model.slack_shifted_energy.extract_values())
+        if slacks_energy.sum() > 1e-9:
             raise ValueError("Slacks are being used. Please check. Consider increasing "
                              "weights.")
         charging = pd.Series(model.charging.extract_values()).unstack().T.set_index(

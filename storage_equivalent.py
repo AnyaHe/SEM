@@ -46,8 +46,7 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
         else:
             ev = 0
         return sum(model.charging[time_horizon, time] for time_horizon in
-                   model.time_horizons_set) + model.slack_res_load_pos[time] - \
-            model.slack_res_load_neg[time] == \
+                   model.time_horizons_set)  == \
             model.residual_load.iloc[time] + hp_el + ev
 
     def maximum_charging(model, time_horizon, time):
@@ -70,10 +69,18 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
         return model.caps_neg[time_horizon] >= -model.energy_levels[time_horizon, time]
 
     def abs_charging_up(model, time_horizon, time):
-        return model.abs_charging[time_horizon, time] >= model.charging[time_horizon, time]
+        return model.abs_charging[time_horizon, time] >= \
+               model.charging[time_horizon, time]
 
     def abs_charging_down(model, time_horizon, time):
-        return model.abs_charging[time_horizon, time] >= -model.charging[time_horizon, time]
+        return model.abs_charging[time_horizon, time] >= \
+               -model.charging[time_horizon, time]
+
+    def fixed_shifted_energy(model, time_horizon):
+        return sum(model.abs_charging[time_horizon, time]
+                   for time in model.time_set) <= \
+            model.fixed_shifted_energy[time_horizon] + \
+            model.slack_shifted_energy[time_horizon]
 
     # save fix parameters
     model.residual_load = residual_load
@@ -91,6 +98,7 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
     model.abs_charging = pm.Var(model.time_horizons_set, model.time_set)
     model.slack_res_load_pos = pm.Var(model.time_set, bounds=(0, None))
     model.slack_res_load_neg = pm.Var(model.time_set, bounds=(0, None))
+    model.slack_shifted_energy = pm.Var(model.time_horizons_set, bounds=(0, None))
     # add constraints
     for time_horizon in model.time_horizons_set:
         times = []
@@ -116,6 +124,11 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
                                            rule=abs_charging_up)
     model.LowerAbsCharging = pm.Constraint(model.time_horizons_set, model.time_set,
                                            rule=abs_charging_down)
+    # optional: add constraint of shifted energy for single storage types
+    model.fixed_shifted_energy = kwargs.get("fixed_shifted_energy", None)
+    if model.fixed_shifted_energy is not None:
+        model.FixedShiftedEnergy = pm.Constraint(
+            model.fixed_shifted_energy.index, rule=fixed_shifted_energy)
     return model
 
 
@@ -229,7 +242,9 @@ def add_storage_equivalents_model(model, residual_load, connections, flows, **kw
 
 def get_slacks(model):
     return sum(model.slack_res_load_neg[time] + model.slack_res_load_neg[time]
-               for time in model.time_set)
+               for time in model.time_set) + sum(
+        model.slack_shifted_energy[time_horizon]
+        for time_horizon in model.time_horizons_set)
 
 
 def minimize_cap(model):
@@ -242,7 +257,7 @@ def minimize_cap(model):
 
 def minimize_energy(model):
     # todo: determine good weighting factor
-    slacks = get_slacks(model) * 1e6
+    slacks = get_slacks(model) * 1e8
     return sum(model.weighting[time_horizon] * sum(model.abs_charging[time_horizon, time]
                                                    for time in model.time_set)
                for time_horizon in model.time_horizons_set) + slacks
