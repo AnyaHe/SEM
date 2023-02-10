@@ -79,8 +79,7 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
     def fixed_shifted_energy(model, time_horizon):
         return sum(model.abs_charging[time_horizon, time]
                    for time in model.time_set) <= \
-            model.fixed_shifted_energy[time_horizon] + \
-            model.slack_shifted_energy[time_horizon]
+            model.fixed_shifted_energy[time_horizon]
 
     # save fix parameters
     model.residual_load = residual_load
@@ -98,7 +97,6 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
     model.abs_charging = pm.Var(model.time_horizons_set, model.time_set)
     model.slack_res_load_pos = pm.Var(model.time_set, bounds=(0, None))
     model.slack_res_load_neg = pm.Var(model.time_set, bounds=(0, None))
-    model.slack_shifted_energy = pm.Var(model.time_horizons_set, bounds=(0, None))
     # add constraints
     for time_horizon in model.time_horizons_set:
         times = []
@@ -242,9 +240,7 @@ def add_storage_equivalents_model(model, residual_load, connections, flows, **kw
 
 def get_slacks(model):
     return sum(model.slack_res_load_neg[time] + model.slack_res_load_neg[time]
-               for time in model.time_set) + sum(
-        model.slack_shifted_energy[time_horizon]
-        for time_horizon in model.time_horizons_set)
+               for time in model.time_set)
 
 
 def minimize_cap(model):

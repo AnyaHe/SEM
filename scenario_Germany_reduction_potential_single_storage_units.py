@@ -114,10 +114,6 @@ if __name__ == "__main__":
         if slacks.sum() > 1e-9:
             raise ValueError("Slacks are being used. Please check. Consider increasing "
                              "weights.")
-        slacks_energy = pd.Series(model.slack_shifted_energy.extract_values())
-        if slacks_energy.sum() > 1e-9:
-            raise ValueError("Slacks are being used. Please check. Consider increasing "
-                             "weights.")
         charging = pd.Series(model.charging.extract_values()).unstack().T.set_index(
             new_res_load.index)
         charging.to_csv(f"{res_dir}/charging_{i}.csv")
