@@ -1,6 +1,9 @@
-import pandas as pd
-import pyomo.environ as pm
+import numpy as np
 import os
+import pandas as pd
+from pandas.testing import assert_frame_equal
+import pyomo.environ as pm
+import time
 
 from scenario_input import base_scenario, scenario_input_hps, save_scenario_dict, \
     scenario_input_evs, get_new_residual_load, adjust_timeseries_data
@@ -14,11 +17,16 @@ from plotting import plot_storage_equivalent_germany_stacked
 if __name__ == "__main__":
     scenario = "test_to_delete"
     extract_storage_duration = True
+    plot_results = False
+    nr_iterations = 10
     solver = "gurobi"
     ev_mode = None # None, "flexible", "inflexible"
     hp_mode = "flexible"  # None, "flexible", "inflexible"
-    tes_relative_size = 1  # in share standard
-    flexible_ev_use_cases = ["home", "work"]
+    tes_relative_size = 4 # in share standard
+    ev_extended_flex = True
+    flexible_ev_use_cases = ["home", "work", "public"]
+    if ev_extended_flex:
+        flexible_ev_use_cases = ["home", "work", "public"]
     # create results directory
     res_dir = os.path.join(f"results/{scenario}")
     os.makedirs(res_dir, exist_ok=True)
@@ -31,7 +39,8 @@ if __name__ == "__main__":
         scenario_dict = scenario_input_hps(scenario_dict=scenario_dict, mode=hp_mode)
     if ev_mode is not None:
         scenario_dict = scenario_input_evs(scenario_dict=scenario_dict, mode=ev_mode,
-                                           use_cases_flexible=flexible_ev_use_cases)
+                                           use_cases_flexible=flexible_ev_use_cases,
+                                           extended_flex=ev_extended_flex)
     scenario_dict["share_pv"] = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
     # shift timeseries
     scenario_dict = adjust_timeseries_data(scenario_dict)
@@ -47,10 +56,8 @@ if __name__ == "__main__":
         ev_mode=ev_mode,
         nr_ev_mio=40
     )
-    shifted_energy_df = pd.DataFrame(columns=["share_pv", "storage_type",
-                                              "energy_stored"])
-    shifted_energy_rel_df = pd.DataFrame(columns=["share_pv", "storage_type",
-                                                  "energy_stored"])
+    shifted_energy_df = pd.DataFrame()
+    shifted_energy_rel_df = pd.DataFrame()
     storage_durations = pd.DataFrame()
     for share_pv in scenario_dict["share_pv"]:
         new_res_load = get_new_residual_load(scenario_dict,
@@ -71,42 +78,59 @@ if __name__ == "__main__":
         model.objective = pm.Objective(rule=minimize_energy,
                                        sense=pm.minimize,
                                        doc='Define objective function')
-        opt = pm.SolverFactory(solver)
-        if solver == "gurobi":
-            if ev_mode == "flexible":
-                opt.options["Method"] = 1
+        for iter in range(nr_iterations):
+            model_tmp = model.clone()
+            np.random.seed(int(time.time()))
+            opt = pm.SolverFactory(solver)
+            if solver == "gurobi":
+                opt.options["Seed"] = int(time.time())
+                opt.options["Method"] = 3
+            opt = pm.SolverFactory(solver)
+
+            results = opt.solve(model_tmp, tee=True)
+            # extract results
+            charging = pd.Series(model_tmp.charging.extract_values()).unstack().T.set_index(
+                new_res_load.index)
+            if extract_storage_duration:
+                storage_durations = pd.concat([storage_durations,
+                                               determine_storage_durations(charging, share_pv)])
+            energy_levels = \
+                pd.Series(model_tmp.energy_levels.extract_values()).unstack().T.set_index(
+                    new_res_load.index)
+            abs_charging = pd.Series(model_tmp.abs_charging.extract_values()).unstack()
+            df_tmp = (abs_charging.sum(axis=1) / 2).reset_index().rename(
+                columns={"index": "storage_type", 0: "energy_stored"})
+            df_tmp["share_pv"] = share_pv
+            if iter == 0:
+                charging.to_csv(f"{res_dir}/charging_{share_pv}.csv")
+                energy_levels.to_csv(f"{res_dir}/energy_levels_{share_pv}.csv")
+                # save flexible hp operation
+                if (hp_mode == "flexible") & (nr_hp_mio == 20.0):
+                    hp_operation = pd.Series(model_tmp.charging_hp_el.extract_values())
+                    hp_operation.index = scenario_dict["ts_demand"].index
+                    hp_operation.to_csv(f"{res_dir}/hp_charging_flexible.csv")
+                # save flexible hp operation
+                if (ev_mode == "flexible") & (nr_ev_mio == 40.0):
+                    ev_operation = pd.Series(model_tmp.charging_ev.extract_values()).unstack().T
+                    ev_operation.index = scenario_dict["ts_demand"].index
+                    ev_operation.to_csv(f"{res_dir}/ev_charging_flexible.csv")
+                shifted_energy_df = pd.concat([shifted_energy_df, df_tmp])
+                df_tmp["energy_stored"] = \
+                    df_tmp["energy_stored"] / \
+                    (scenario_dict["ts_demand"].sum().sum() + sum_energy_heat + energy_ev) * 100
+                shifted_energy_rel_df = pd.concat([shifted_energy_rel_df, df_tmp])
             else:
-                opt.options["Method"] = 0
-        results = opt.solve(model, tee=True)
-        charging = pd.Series(model.charging.extract_values()).unstack().T.set_index(
-                new_res_load.index)
-        charging.to_csv(f"{res_dir}/charging_{share_pv}.csv")
-        if extract_storage_duration:
-            storage_durations = pd.concat([storage_durations,
-                                           determine_storage_durations(charging, share_pv)])
-        energy_levels = \
-            pd.Series(model.energy_levels.extract_values()).unstack().T.set_index(
-                new_res_load.index)
-        energy_levels.to_csv(f"{res_dir}/energy_levels_{share_pv}.csv")
-        abs_charging = pd.Series(model.abs_charging.extract_values()).unstack()
-        df_tmp = (abs_charging.sum(axis=1) / 2).reset_index().rename(
-            columns={"index": "storage_type", 0: "energy_stored"})
-        df_tmp["share_pv"] = share_pv
-        shifted_energy_df = shifted_energy_df.append(df_tmp, ignore_index=True)
-        df_tmp["energy_stored"] = \
-            df_tmp["energy_stored"] / \
-            (scenario_dict["ts_demand"].sum().sum() + sum_energy_heat + energy_ev) * 100
-        shifted_energy_rel_df = shifted_energy_rel_df.append(df_tmp,
-                                                             ignore_index=True)
+                assert_frame_equal(df_tmp.sort_index(axis=1), shifted_energy_df.loc[
+                    (shifted_energy_df["share_pv"] == share_pv)].sort_index(axis=1))
     shifted_energy_df.to_csv(f"{res_dir}/storage_equivalents.csv")
     shifted_energy_rel_df.to_csv(
         f"{res_dir}/storage_equivalents_relative.csv")
     if extract_storage_duration:
         storage_durations.to_csv(f"{res_dir}/storage_durations.csv")
     # plot results
-    plot_storage_equivalent_germany_stacked(shifted_energy_df,
-                                                parameter={
-                                                    "share_pv": "Share PV [-]"})
+    if plot_results:
+        plot_storage_equivalent_germany_stacked(shifted_energy_df,
+                                                parameter={"share_pv": "Share PV [-]"})
     # remove timeseries as they cannot be saved in json format
     save_scenario_dict(scenario_dict, res_dir)
     print("SUCCESS")
