@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import os
 
+from data_preparation.data_preparation import determine_shifting_times_ev
+
 
 def add_ev_model(model, flex_bands, efficiency=0.9):
     def charging_ev(model, time):
@@ -192,6 +194,7 @@ def import_and_merge_flexibility_bands_extended(data_dir, grid_ids=[],
             band_df[append] += flexibility_bands_tmp.sum(axis=1)
             if band == "upper_power":
                 nr_ev += len(flexibility_bands_tmp.columns)
+            print(f"Finished grid {grid_id} {band}")
         # remove numeric problems
         if "upper" in band:
             flexibility_bands[band] = band_df + 1e-6
@@ -199,6 +202,20 @@ def import_and_merge_flexibility_bands_extended(data_dir, grid_ids=[],
             flexibility_bands[band] = band_df - 1e-6
     print(f"Total of {nr_ev} EVs imported.")
     return flexibility_bands
+
+
+def determine_shifting_times(data_dir, grid_ids, use_cases):
+    flexibility_bands = {}
+    for grid_id in grid_ids:
+        for use_case in use_cases:
+            for band in ["upper_energy", "lower_energy"]:
+                flexibility_bands[band] = \
+                    pd.read_csv(data_dir + f'/{grid_id}/{band}_{use_case}.csv',
+                                index_col=0, parse_dates=True, dtype=np.float32)
+
+            print(f"Extracting shifting times for grid {grid_id}.")
+            shifting_times = determine_shifting_times_ev(flexibility_bands)
+            shifting_times.to_csv(data_dir+f'/{grid_id}/shifting_times_{use_case}.csv')
 
 
 def scale_electric_vehicles(nr_ev_mio, scenario_dict):
@@ -268,6 +285,9 @@ def reduced_operation_multi(model):
 if __name__ == "__main__":
     mode = "extended"
     save_files = True
+    if mode == "extended":
+        merge_bands = False
+        extract_shifting_time = True
     solver = "gurobi"
     time_increment = pd.to_timedelta('1h')
     if mode == "single":
@@ -362,9 +382,12 @@ if __name__ == "__main__":
         grid_dir = r"H:\Grids"
         grid_ids = [176, 177, 1056, 1690, 1811, 2534]
         use_case = "extended"
-        bands = import_and_merge_flexibility_bands_extended(grid_dir, grid_ids=grid_ids,
-                                                            append=use_case)
-        if save_files:
-            for band in bands.keys():
-                bands[band].to_csv(f"data/{band}_flex++.csv")
+        if merge_bands:
+            bands = import_and_merge_flexibility_bands_extended(grid_dir, grid_ids=grid_ids,
+                                                                append=use_case)
+            if save_files:
+                for band in bands.keys():
+                    bands[band].to_csv(f"data/{band}_flex++.csv")
+        if extract_shifting_time:
+            determine_shifting_times(grid_dir, grid_ids=grid_ids, use_cases=[use_case])
     print("SUCCESS")

@@ -82,6 +82,20 @@ def import_flexibility_bands(dir, use_cases):
     return flexibility_bands
 
 
+def determine_shifting_times_ev(flex_bands):
+    """
+    Method to determine the shifting times between upper and lower energy bands.
+    :param flex_bands:
+    :return:
+    """
+    shifting_time = pd.DataFrame(columns=flex_bands["upper_energy"].columns,
+                                 index=flex_bands["upper_energy"].index)
+    for idx_max, energy in flex_bands["upper_energy"].iterrows():
+        idx_min = flex_bands["lower_energy"][flex_bands["lower_energy"] <= energy][::-1].idxmax()
+        shifting_time.loc[idx_max] = idx_min - idx_max
+    return shifting_time
+
+
 if __name__ == "__main__":
     scenario_dict = {
         "hp_weight_air": 0.71,
