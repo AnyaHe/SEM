@@ -5,18 +5,41 @@ import json
 from data_preparation.data_preparation import get_heat_pump_timeseries_data
 
 
-def base_scenario():
+def base_scenario(vres_data_source="ego", **kwargs):
     """
     Method defining the default scenario input for three different storage equivalents:
     daily, weekly and seasonal
+    :param vres_data_source: str
+        data source of renewable feed-in data, implemented so far: "ego", "rn". The respective
+        time series of the ego-project and renewables ninja have to be added to the data folder.
+    :param kwargs: dict
+        Optional input parameters
+        year: int
+            Only used for vres_data_source="rn", if set, a different year of the input data
+            is used.
     :return: dict
         Dictionary with scenario input data
     """
-    vres = pd.read_csv(r"data/vres_reference_ego100.csv", index_col=0,
-                       parse_dates=True).divide(1000)
+    timeindex = pd.date_range("2011-01-01", freq="1h", periods=8736)
     demand = pd.read_csv(r"data/demand_germany_ego100.csv", index_col=0,
                          parse_dates=True)
-    timeindex = pd.date_range("2011-01-01", freq="1h", periods=8736)
+    if vres_data_source == "ego":
+        vres = pd.read_csv(r"data/vres_reference_ego100.csv", index_col=0,
+                           parse_dates=True).divide(1000)
+    elif vres_data_source == "rn":
+        wind_rn = pd.read_csv("data/ninja_wind_country_DE_current-merra-2_corrected.csv",
+                              index_col=0, parse_dates=True, header=2)
+        solar_rn = pd.read_csv("data/ninja_pv_country_DE_merra-2_corrected.csv",
+                               index_col=0, parse_dates=True, header=2)
+        vres = pd.DataFrame()
+        vres["wind"] = wind_rn["national"]
+        vres["solar"] = solar_rn["national"]
+        year = kwargs.get("year", None)
+        if year is not None:
+            vres = vres.loc[vres.index.year == year].iloc[:len(timeindex)]
+            vres.index = timeindex
+    else:
+        raise ValueError("Data source for vres not valid.")
     return {
         "objective": "minimize_energy",
         "weighting": [1, 7, 364],
