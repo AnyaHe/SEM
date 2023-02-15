@@ -76,7 +76,7 @@ if __name__ == "__main__":
         if ev_mode == "flexible":
             add_evs_model(model, flexibility_bands)
         model = add_storage_equivalent_model(model, new_res_load,
-                                             time_horizons=[24, 7 * 24, 24 * 366])
+                                             time_horizons=scenario_dict["time_horizons"])
         model.objective = pm.Objective(rule=minimize_energy,
                                        sense=pm.minimize,
                                        doc='Define objective function')
