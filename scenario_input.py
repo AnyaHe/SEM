@@ -38,6 +38,8 @@ def base_scenario(vres_data_source="ego", **kwargs):
         if year is not None:
             vres = vres.loc[vres.index.year == year].iloc[:len(timeindex)]
             vres.index = timeindex
+    elif vres_data_source == "flat_generation":
+        vres = pd.DataFrame(index=timeindex, columns=["gen"], data=1)
     else:
         raise ValueError("Data source for vres not valid.")
     return {
