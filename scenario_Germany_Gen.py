@@ -17,6 +17,8 @@ from plotting import plot_storage_equivalent_germany_stacked
 if __name__ == "__main__":
     scenario = "test_to_delete"
     extract_storage_duration = True
+    vres_data_source = "rn" # "ego", "rn"
+    year = 1990 # solar_min: 1981, solar_max: 2003, wind_min: 2010, wind_max: 1990
     plot_results = False
     nr_iterations = 10
     solver = "gurobi"
@@ -31,7 +33,7 @@ if __name__ == "__main__":
     res_dir = os.path.join(f"results/{scenario}")
     os.makedirs(res_dir, exist_ok=True)
     # load scenario values
-    scenario_dict = base_scenario()
+    scenario_dict = base_scenario(vres_data_source=vres_data_source, year=year)
     scenario_dict["hp_mode"] = hp_mode
     scenario_dict["ev_mode"] = ev_mode
     scenario_dict["solver"] = solver
@@ -74,7 +76,7 @@ if __name__ == "__main__":
         if ev_mode == "flexible":
             add_evs_model(model, flexibility_bands)
         model = add_storage_equivalent_model(model, new_res_load,
-                                             time_horizons=[24, 7 * 24, 24 * 366])
+                                             time_horizons=scenario_dict["time_horizons"])
         model.objective = pm.Objective(rule=minimize_energy,
                                        sense=pm.minimize,
                                        doc='Define objective function')

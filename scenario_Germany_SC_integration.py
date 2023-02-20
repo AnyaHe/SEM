@@ -17,6 +17,8 @@ if __name__ == "__main__":
     scenario = "test_HP_reference"
     extract_storage_duration = True
     plot_results = False
+    vres_data_source = "ego"
+    year = 2011 # solar_min: 1981, solar_max: 2003, wind_min: 2010, wind_max: 1990
     nr_iterations = 10
     solver = "gurobi"
     hp_mode = "inflexible" # None, "flexible", "inflexible"
@@ -33,7 +35,7 @@ if __name__ == "__main__":
     res_dir = os.path.join(f"results/{scenario}")
     os.makedirs(res_dir, exist_ok=True)
     # load scenario values
-    scenario_dict = base_scenario()
+    scenario_dict = base_scenario(vres_data_source=vres_data_source, year=year)
     scenario_dict["hp_mode"] = hp_mode
     scenario_dict["ev_mode"] = ev_mode
     scenario_dict["solver"] = solver

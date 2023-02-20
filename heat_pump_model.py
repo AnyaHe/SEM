@@ -43,7 +43,7 @@ def model_input_hps(scenario_dict, hp_mode, i=None, nr_hp_mio=None):
             if nr_hp_mio is not None:
                 print("Both i and nr_hp_mio are defined, nr_hp_mio will be used.")
             else:
-                nr_hp_mio = i * 5
+                nr_hp_mio = i * 2.5
         else:
             if nr_hp_mio is None:
                 raise ValueError("Either i or nr_hp_mio have to be provided.")
