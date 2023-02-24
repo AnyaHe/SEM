@@ -5,13 +5,16 @@ import json
 from data_preparation.data_preparation import get_heat_pump_timeseries_data
 
 
-def base_scenario(vres_data_source="ego", **kwargs):
+def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
     """
     Method defining the default scenario input for three different storage equivalents:
     daily, weekly and seasonal
     :param vres_data_source: str
         data source of renewable feed-in data, implemented so far: "ego", "rn". The respective
         time series of the ego-project and renewables ninja have to be added to the data folder.
+    :param demand_data_source: str
+        data source of demand data, implemented so far: "ego", "entso". The respective
+        time series of the ego-project and entso-e have to be added to the data folder.
     :param kwargs: dict
         Optional input parameters
         year: int
@@ -21,8 +24,23 @@ def base_scenario(vres_data_source="ego", **kwargs):
         Dictionary with scenario input data
     """
     timeindex = pd.date_range("2011-01-01", freq="1h", periods=8736)
-    demand = pd.read_csv(r"data/demand_germany_ego100.csv", index_col=0,
-                         parse_dates=True)
+    if demand_data_source == "ego":
+        demand = pd.read_csv(r"data/demand_germany_ego100.csv", index_col=0,
+                             parse_dates=True)
+    elif demand_data_source == "entso":
+        year = kwargs.get("year")
+        demand = pd.DataFrame()
+        for month in ["01", "02", "03", "04", "05", "06",
+                      "07", "08", "09", "10", "11", "12"]:
+            demand_tmp = pd.read_csv(
+                f"data/load_entso/{year}_{month}_ActualTotalLoad_6.1.A.csv", sep='\t',
+                index_col=0, parse_dates=True)
+            hourly_demand_germany = demand_tmp.loc[
+                demand_tmp.AreaName == "DE CTY"][
+                ["TotalLoadValue"]].resample("1h").mean().divide(1000)
+            demand = pd.concat([demand, hourly_demand_germany])
+        demand = demand.iloc[:len(timeindex)]
+        demand.index = timeindex
     if vres_data_source == "ego":
         vres = pd.read_csv(r"data/vres_reference_ego100.csv", index_col=0,
                            parse_dates=True).divide(1000)

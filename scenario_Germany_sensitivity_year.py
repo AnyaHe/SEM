@@ -15,11 +15,20 @@ from plotting import plot_storage_equivalent_germany_stacked
 
 
 if __name__ == "__main__":
-    scenario = "Variation_Generation_years"
-    years_dict = {
-        "ego": [2011],
-        "rn": [year for year in range(1980, 2020)]
-    }
+    scenario = "Variation_Load_years"
+    mode = "demand"
+    if mode == "generation":
+        years_dict = {
+            "ego": [2011],
+            "rn": [year for year in range(1980, 2020)]
+        }
+    elif mode == "demand":
+        years_dict = {
+            "ego": [2011],
+            "entso": [year for year in range(2015, 2023)]
+        }
+    else:
+        raise ValueError("mode not correct")
     extract_storage_duration = True
     plot_results = False
     nr_iterations = 10
@@ -32,16 +41,21 @@ if __name__ == "__main__":
     if ev_extended_flex:
         flexible_ev_use_cases = ["home", "work", "public"]
     # create results directory
-    res_dir = os.path.join(f"results/{scenario}")
+    res_dir = os.path.join(f"results/two_weeks/{scenario}")
     os.makedirs(res_dir, exist_ok=True)
     # initialize results
     shifted_energy_df = pd.DataFrame()
     shifted_energy_rel_df = pd.DataFrame()
     storage_durations = pd.DataFrame()
     # load scenario values
-    for vres_data_source in years_dict.keys():
-        for year in years_dict[vres_data_source]:
-            scenario_dict = base_scenario(vres_data_source=vres_data_source, year=year)
+    for data_source in years_dict.keys():
+        for year in years_dict[data_source]:
+            if mode == "generatio":
+                scenario_dict = base_scenario(vres_data_source=data_source, year=year)
+            elif mode == "demand":
+                scenario_dict = base_scenario(demand_data_source=data_source, year=year)
+            else:
+                raise ValueError("Mode not defined")
             scenario_dict["hp_mode"] = hp_mode
             scenario_dict["ev_mode"] = ev_mode
             scenario_dict["solver"] = solver
@@ -98,18 +112,18 @@ if __name__ == "__main__":
                 if extract_storage_duration:
                     storage_durations = pd.concat([storage_durations,
                                                    determine_storage_durations(
-                                                       charging, f"{vres_data_source}_{year}")])
+                                                       charging, f"{data_source}_{year}")])
                 energy_levels = \
                     pd.Series(model_tmp.energy_levels.extract_values()).unstack().T.set_index(
                         new_res_load.index)
                 abs_charging = pd.Series(model_tmp.abs_charging.extract_values()).unstack()
                 df_tmp = (abs_charging.sum(axis=1) / 2).reset_index().rename(
                     columns={"index": "storage_type", 0: "energy_stored"})
-                df_tmp["vres_data_source"] = vres_data_source
+                df_tmp["data_source"] = data_source
                 df_tmp["year"] = year
                 if iter == 0:
-                    charging.to_csv(f"{res_dir}/charging_{vres_data_source}_{year}.csv")
-                    energy_levels.to_csv(f"{res_dir}/energy_levels_{vres_data_source}_{year}.csv")
+                    charging.to_csv(f"{res_dir}/charging_{data_source}_{year}.csv")
+                    energy_levels.to_csv(f"{res_dir}/energy_levels_{data_source}_{year}.csv")
                     # save flexible hp operation
                     if (hp_mode == "flexible") & (nr_hp_mio == 20.0):
                         hp_operation = pd.Series(model_tmp.charging_hp_el.extract_values())
@@ -127,7 +141,7 @@ if __name__ == "__main__":
                     shifted_energy_rel_df = pd.concat([shifted_energy_rel_df, df_tmp])
                 else:
                     assert_frame_equal(df_tmp.sort_index(axis=1), shifted_energy_df.loc[
-                        (shifted_energy_df["vres_data_source"] == vres_data_source) &
+                        (shifted_energy_df["data_source"] == data_source) &
                         (shifted_energy_df["year"] == year)].sort_index(axis=1))
     shifted_energy_df.to_csv(f"{res_dir}/storage_equivalents.csv")
     shifted_energy_rel_df.to_csv(
