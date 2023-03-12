@@ -330,9 +330,12 @@ def determine_storage_durations(charging, index="duration"):
         """
         sdi["storage_duration_numerical"] = sdi.storage_duration.divide(
             pd.to_timedelta("1h"))
-        mean_time_shift = \
-            (sdi.storage_duration_numerical * sdi.energy_shifted.abs()).sum() / \
-            sdi.energy_shifted.abs().sum()
+        if sdi.energy_shifted.abs().sum() > 0:
+            mean_time_shift = \
+                (sdi.storage_duration_numerical * sdi.energy_shifted.abs()).sum() / \
+                sdi.energy_shifted.abs().sum()
+        else:
+            mean_time_shift = 0
         return mean_time_shift * pd.to_timedelta("1h")
     if (charging.sum() > 1e-5).any():
         print("Warning: charging time series do not amount to 0.")
