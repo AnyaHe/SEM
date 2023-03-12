@@ -46,8 +46,7 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
         else:
             ev = 0
         return sum(model.charging[time_horizon, time] for time_horizon in
-                   model.time_horizons_set)  == \
-            model.residual_load.iloc[time] + hp_el + ev
+                   model.time_horizons_set) + model.residual_load.iloc[time] + hp_el + ev == 0
 
     def maximum_charging(model, time_horizon, time):
         return model.charging_max[time_horizon] >= model.charging[time_horizon, time]
