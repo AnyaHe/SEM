@@ -115,20 +115,20 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
     model.ChargingStorages = pm.Constraint(model.time_horizons_set, model.time_set,
                                           rule=charge_storages)
     model.ResidualLoad = pm.Constraint(model.time_set, rule=meet_residual_load)
-    model.MaximumCharging = pm.Constraint(model.time_horizons_set, model.time_set,
-                                          rule=maximum_charging)
-    model.MaximumCapacity = pm.Constraint(model.time_horizons_set, model.time_set,
-                                          rule=maximum_capacity)
-    model.MinimumCapacity = pm.Constraint(model.time_horizons_set, model.time_set,
-                                          rule=minimum_capacity)
-    model.UpperChargingCapRatio = pm.Constraint(model.time_horizons_set,
-                                                rule=charging_cap_ratio_upper)
-    model.LowerChargingCapRatio = pm.Constraint(model.time_horizons_set,
-                                                rule=charging_cap_ratio_lower)
-    model.UpperAbsCharging = pm.Constraint(model.time_horizons_set, model.time_set,
-                                           rule=abs_charging_up)
-    model.LowerAbsCharging = pm.Constraint(model.time_horizons_set, model.time_set,
-                                           rule=abs_charging_down)
+    # model.MaximumCharging = pm.Constraint(model.time_horizons_set, model.time_set,
+    #                                       rule=maximum_charging)
+    # model.MaximumCapacity = pm.Constraint(model.time_horizons_set, model.time_set,
+    #                                       rule=maximum_capacity)
+    # model.MinimumCapacity = pm.Constraint(model.time_horizons_set, model.time_set,
+    #                                       rule=minimum_capacity)
+    # model.UpperChargingCapRatio = pm.Constraint(model.time_horizons_set,
+    #                                             rule=charging_cap_ratio_upper)
+    # model.LowerChargingCapRatio = pm.Constraint(model.time_horizons_set,
+    #                                             rule=charging_cap_ratio_lower)
+    model.UpperDischarging = pm.Constraint(model.time_horizons_set, model.time_set,
+                                           rule=discharging_up)
+    model.LowerDischarging = pm.Constraint(model.time_horizons_set, model.time_set,
+                                           rule=discharging_down)
     # optional: add constraint of shifted energy for single storage types
     model.fixed_shifted_energy = kwargs.get("fixed_shifted_energy", None)
     if model.fixed_shifted_energy is not None:
