@@ -61,9 +61,9 @@ def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
     else:
         raise ValueError("Data source for vres not valid.")
     return {
-        "objective": "minimize_energy",
-        "weighting": [1, 7, 364],
-        "time_horizons": [24, 7*24, 24*366],
+        "objective": "minimize_discharging",
+        "weighting": [1.001, 1.001**2, 1.001**3],
+        "time_horizons": [24, 14*24, 24*366],
         "time_increment": '1h',
         "ts_vres": vres.loc[timeindex],
         "ts_demand": demand.loc[timeindex]

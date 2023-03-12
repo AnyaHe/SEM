@@ -81,6 +81,13 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
                    for time in model.time_set) <= \
             model.fixed_shifted_energy[time_horizon]
 
+    def discharging_up(model, time_horizon, time):
+        return model.discharging[time_horizon, time] >= 0
+
+    def discharging_down(model, time_horizon, time):
+        return model.discharging[time_horizon, time] >= \
+               -model.charging[time_horizon, time]
+
     # save fix parameters
     model.residual_load = residual_load
     model.time_horizons = kwargs.get("time_horizons", [24, 7*24, 28*24, 24*366])
@@ -89,12 +96,13 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
     # add time horizon set
     model.time_horizons_set = pm.RangeSet(0, len(model.time_horizons)-1)
     # set up variables
-    model.caps_pos = pm.Var(model.time_horizons_set)
-    model.caps_neg = pm.Var(model.time_horizons_set)
+    # model.caps_pos = pm.Var(model.time_horizons_set)
+    # model.caps_neg = pm.Var(model.time_horizons_set)
     model.energy_levels = pm.Var(model.time_horizons_set, model.time_set)
     model.charging = pm.Var(model.time_horizons_set, model.time_set)
-    model.charging_max = pm.Var(model.time_horizons_set)
-    model.abs_charging = pm.Var(model.time_horizons_set, model.time_set)
+    # model.charging_max = pm.Var(model.time_horizons_set)
+    # model.abs_charging = pm.Var(model.time_horizons_set, model.time_set)
+    model.discharging = pm.Var(model.time_horizons_set, model.time_set)
     model.slack_res_load_pos = pm.Var(model.time_set, bounds=(0, None))
     model.slack_res_load_neg = pm.Var(model.time_set, bounds=(0, None))
     # add constraints
@@ -189,6 +197,13 @@ def add_storage_equivalents_model(model, residual_load, connections, flows, **kw
         return model.abs_charging[cell, time_horizon, time] >= \
                -model.charging[cell, time_horizon, time]
 
+    def discharging_up(model, cell, time_horizon, time):
+        return model.discharging[cell, time_horizon, time] >= 0
+
+    def discharging_down(model, cell, time_horizon, time):
+        return model.discharging[cell, time_horizon, time] >= \
+               -model.charging[cell, time_horizon, time]
+
     # save fix parameters
     model.residual_load = residual_load
     model.time_horizons = kwargs.get("time_horizons", [24, 7*24, 28*24, 24*366])
@@ -255,6 +270,14 @@ def minimize_energy(model):
     # todo: determine good weighting factor
     slacks = get_slacks(model) * 1e8
     return sum(model.weighting[time_horizon] * sum(model.abs_charging[time_horizon, time]
+                                                   for time in model.time_set)
+               for time_horizon in model.time_horizons_set) + slacks
+
+
+def minimize_discharging(model):
+    # todo: determine good weighting factor
+    slacks = get_slacks(model) * 1e6
+    return sum(model.weighting[time_horizon] * sum(model.discharging[time_horizon, time]
                                                    for time in model.time_set)
                for time_horizon in model.time_horizons_set) + slacks
 
