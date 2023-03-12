@@ -41,6 +41,12 @@ def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
             demand = pd.concat([demand, hourly_demand_germany])
         demand = demand.iloc[:len(timeindex)]
         demand.index = timeindex
+        # adjust timeseries to reference demand to make more comparable
+        demand_ref = kwargs.get("reference_demand", 499299.467829801)
+        if demand_ref is not None:
+            demand = demand.divide(demand.sum().sum()).multiply(demand_ref)
+    else:
+        raise ValueError("Data source for demand not valid.")
     if vres_data_source == "ego":
         vres = pd.read_csv(r"data/vres_reference_ego100.csv", index_col=0,
                            parse_dates=True).divide(1000)
@@ -56,6 +62,13 @@ def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
         if year is not None:
             vres = vres.loc[vres.index.year == year].iloc[:len(timeindex)]
             vres.index = timeindex
+        # adjust timeseries to reference share pv to make more comparaböe
+        share_pv = kwargs.get("share_pv", 0.2817756687234966)
+        if share_pv is not None:
+            sum_energy = vres.sum().sum()
+            vres_scaled = vres.divide(vres.sum())
+            vres["solar"] = vres_scaled["solar"] * share_pv * sum_energy
+            vres["wind"] = vres_scaled["wind"] * (1-share_pv) * sum_energy
     elif vres_data_source == "flat_generation":
         vres = pd.DataFrame(index=timeindex, columns=["gen"], data=1)
     else:
