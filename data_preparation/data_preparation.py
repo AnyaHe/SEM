@@ -96,7 +96,36 @@ def determine_shifting_times_ev(flex_bands):
     return shifting_time
 
 
+def extract_relevant_data_from_entso(data_dir, save_dir, years=None):
+    if years is None:
+        years = [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022]
+    generation = pd.DataFrame()
+    for year in years:
+        for month in ["01", "02", "03", "04", "05", "06",
+                      "07", "08", "09", "10", "11", "12"]:
+            hourly_generation_vres_germany = pd.DataFrame()
+            generation_tmp = pd.read_csv(
+                f"{data_dir}/{year}_{month}_AggregatedGenerationPerType_16.1.B_C.csv", sep='\t',
+                index_col=0, parse_dates=True)
+            hourly_generation_vres_germany["solar"] = generation_tmp.loc[
+                (generation_tmp.AreaName == "DE CTY") &
+                (generation_tmp.ProductionType == "Solar")][
+                "ActualGenerationOutput"].resample("1h").mean()
+            hourly_generation_vres_germany["wind_onshore"] = generation_tmp.loc[
+                (generation_tmp.AreaName == "DE CTY") &
+                (generation_tmp.ProductionType == "Wind Onshore")][
+                "ActualGenerationOutput"].resample("1h").mean()
+            hourly_generation_vres_germany["wind_offshore"] = generation_tmp.loc[
+                (generation_tmp.AreaName == "DE CTY") &
+                (generation_tmp.ProductionType == "Wind Offshore")][
+                "ActualGenerationOutput"].resample("1h").mean()
+            generation = pd.concat([generation, hourly_generation_vres_germany])
+    generation.to_csv(f"{save_dir}/vres_entso-e.csv")
+
+
 if __name__ == "__main__":
+    extract_relevant_data_from_entso(r"H:\generation_entso",
+                                     r"U:\Software\Flexibility-Quantification\data")
     scenario_dict = {
         "hp_weight_air": 0.71,
         "hp_weight_ground": 0.29,
