@@ -22,11 +22,12 @@ if __name__ == "__main__":
     plot_results = False
     nr_iterations = 10
     solver = "gurobi"
-    ev_mode = None # None, "flexible", "inflexible"
-    hp_mode = "flexible"  # None, "flexible", "inflexible"
-    tes_relative_size = 4 # in share standard
-    ev_extended_flex = True
-    flexible_ev_use_cases = ["home", "work", "public"]
+    hp_mode = None # None, "flexible", "inflexible"
+    ev_mode = None  # None, "flexible", "inflexible"
+    tes_relative_size = 1 # in share standard
+    ev_extended_flex = False
+    ev_v2g = False
+    flexible_ev_use_cases = ["home", "work"]
     if ev_extended_flex:
         flexible_ev_use_cases = ["home", "work", "public"]
     # create results directory
@@ -74,7 +75,7 @@ if __name__ == "__main__":
             model = add_heat_pump_model(model, p_nom_hp, capacity_tes,
                                         scenario_dict["ts_cop"], ts_heat_demand)
         if ev_mode == "flexible":
-            add_evs_model(model, flexibility_bands)
+            add_evs_model(model, flexibility_bands, v2g=scenario_dict["ev_v2g"])
         model = add_storage_equivalent_model(model, new_res_load,
                                              time_horizons=scenario_dict["time_horizons"])
         model.objective = pm.Objective(rule=minimize_energy,

@@ -22,9 +22,9 @@ if __name__ == "__main__":
     nr_iterations = 10
     solver = "gurobi"
     ev_mode = "flexible" # None, "flexible", "inflexible"
-    hp_mode = None # None, "flexible", "inflexible"
-    tes_relative_size = 1 # in share standard
-    ev_extended_flex = False
+    tes_relative_size = 4 # in share standard
+    ev_extended_flex = True
+    ev_v2g = True
     flexible_ev_use_cases = ["home", "work", "public"]
     if ev_extended_flex:
         flexible_ev_use_cases = ["home", "work", "public"]
@@ -48,7 +48,7 @@ if __name__ == "__main__":
     if ev_mode is not None:
         scenario_dict = scenario_input_evs(scenario_dict=scenario_dict, mode=ev_mode,
                                            use_cases_flexible=flexible_ev_use_cases,
-                                           extended_flex=ev_extended_flex)
+                                           extended_flex=ev_extended_flex, v2g=ev_v2g)
     # shift timeseries
     scenario_dict = adjust_timeseries_data(scenario_dict)
     # initialise result
@@ -90,7 +90,7 @@ if __name__ == "__main__":
                                         scenario_dict["ts_cop"], ts_heat_demand)
         # add ev model if flexible
         if ev_mode == "flexible":
-            add_evs_model(model, flexibility_bands)
+            add_evs_model(model, flexibility_bands, v2g=scenario_dict["ev_v2g"])
         # add storage equivalents
         model = se.add_storage_equivalent_model(
             model, new_res_load,

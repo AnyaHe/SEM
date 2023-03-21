@@ -23,9 +23,10 @@ if __name__ == "__main__":
     solver = "gurobi"
     hp_mode = "inflexible" # None, "flexible", "inflexible"
     ev_mode = None # None, "flexible", "inflexible"
-    tes_relative_size = 1 # in share standard
-    ev_extended_flex = False
-    flexible_ev_use_cases = ["home", "work"]
+    tes_relative_size = 4 # in share standard
+    ev_extended_flex = True
+    ev_v2g = True
+    flexible_ev_use_cases = ["home", "work", "public"]
     if ev_extended_flex:
         flexible_ev_use_cases = ["home", "work", "public"]
     # relative_weighting = 1000
@@ -47,7 +48,7 @@ if __name__ == "__main__":
     if ev_mode is not None:
         scenario_dict = scenario_input_evs(scenario_dict=scenario_dict, mode=ev_mode,
                                            use_cases_flexible=flexible_ev_use_cases,
-                                           extended_flex=ev_extended_flex)
+                                           extended_flex=ev_extended_flex, v2g=ev_v2g)
     # shift timeseries
     scenario_dict = adjust_timeseries_data(scenario_dict)
     # initialise result
@@ -84,7 +85,7 @@ if __name__ == "__main__":
                                         scenario_dict["ts_cop"], ts_heat_demand)
         # add ev model if flexible
         if ev_mode == "flexible":
-            add_evs_model(model, flexibility_bands)
+            add_evs_model(model, flexibility_bands, v2g=scenario_dict["ev_v2g"])
         # add storage equivalents
         model = se.add_storage_equivalent_model(
             model, new_res_load, time_horizons=scenario_dict["time_horizons"])
@@ -99,8 +100,18 @@ if __name__ == "__main__":
             if solver == "gurobi":
                 opt.options["Seed"] = int(time.time())
                 opt.options["Method"] = 3
+                if ev_v2g:
+                    opt.options["NonConvex"] = 2
 
             results = opt.solve(model_tmp, tee=True)
+            # check that no simultaneous charging and discharging occurs for v2g
+            if ev_v2g:
+                charging_ev = pd.Series(model_tmp.charging_ev.extract_values()).unstack().T.set_index(
+                    new_res_load.index)
+                discharging_ev = pd.Series(model_tmp.discharging_ev.extract_values()).unstack().T.set_index(
+                    new_res_load.index)
+                if charging_ev.multiply(discharging_ev).sum().sum() > 1e-3:
+                    raise ValueError("Simultaneous charging and discharging of EVs. Please check.")
             # extract results
             charging = pd.Series(model_tmp.charging.extract_values()).unstack().T.set_index(
                 new_res_load.index)
@@ -126,6 +137,8 @@ if __name__ == "__main__":
                 # save flexible hp operation
                 if (ev_mode == "flexible") & (nr_ev_mio == 40.0):
                     ev_operation = pd.Series(model_tmp.charging_ev.extract_values()).unstack().T
+                    if ev_v2g:
+                        ev_operation -= pd.Series(model_tmp.discharging_ev.extract_values()).unstack().T
                     ev_operation.index = scenario_dict["ts_demand"].index
                     ev_operation.to_csv(f"{res_dir}/ev_charging_flexible.csv")
                 shifted_energy_df = pd.concat([shifted_energy_df, df_tmp])

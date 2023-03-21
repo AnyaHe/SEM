@@ -42,7 +42,8 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
         else:
             hp_el = 0
         if hasattr(model, "charging_ev"):
-            ev = sum([model.charging_ev[cp, time] for cp in model.charging_points_set])
+            ev = sum([model.charging_ev[cp, time] - model.discharging_ev[cp, time]
+                      for cp in model.charging_points_set])
         else:
             ev = 0
         return sum(model.charging[time_horizon, time] for time_horizon in
@@ -253,8 +254,13 @@ def add_storage_equivalents_model(model, residual_load, connections, flows, **kw
 
 
 def get_slacks(model):
+    if hasattr(model, "discharging_ev"):
+        slack_ev = sum(model.charging_ev[cp, time]*model.discharging_ev[cp, time]
+                       for cp in model.charging_points_set for time in model.time_set)
+    else:
+        slack_ev = 0
     return sum(model.slack_res_load_neg[time] + model.slack_res_load_neg[time]
-               for time in model.time_set)
+               for time in model.time_set) + slack_ev
 
 
 def minimize_cap(model):

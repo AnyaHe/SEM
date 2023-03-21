@@ -122,7 +122,8 @@ def scenario_input_hps(scenario_dict={}, mode="inflexible", timesteps=None):
 
 
 def scenario_input_evs(scenario_dict={}, mode="inflexible",
-                       use_cases_flexible=None, extended_flex=False, timesteps=None):
+                       use_cases_flexible=None, extended_flex=False, timesteps=None,
+                       v2g=False):
     """
     Method to add relevant information on modelled evs
     :param scenario_dict: dict
@@ -175,6 +176,7 @@ def scenario_input_evs(scenario_dict={}, mode="inflexible",
         "ts_ref_charging": ref_charging.loc[timesteps],
         "nr_ev_ref": nr_ev_ref,
         "ev_extended_flex": extended_flex,
+        "ev_v2g": v2g
     })
     return scenario_dict
 
