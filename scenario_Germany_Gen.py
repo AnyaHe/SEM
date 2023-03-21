@@ -31,7 +31,7 @@ if __name__ == "__main__":
     if ev_extended_flex:
         flexible_ev_use_cases = ["home", "work", "public"]
     # create results directory
-    res_dir = os.path.join(f"results/{scenario}")
+    res_dir = os.path.join(f"results/two_weeks_weight_one/{scenario}")
     os.makedirs(res_dir, exist_ok=True)
     # load scenario values
     scenario_dict = base_scenario(vres_data_source=vres_data_source, year=year)
