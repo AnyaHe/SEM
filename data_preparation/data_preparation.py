@@ -26,7 +26,8 @@ def get_heat_pump_timeseries_data(data_dir, scenario_dict):
     profiles_hp = profiles_hp.loc[timesteps.tz_localize("UTC")]
     # calculate heat_demand and set right timeindex
     heat_demand = sum([
-        profiles_hp[f"DE_heat_demand_space_{building}"]for building in ["SFH", "MFH"]
+        profiles_hp[f"DE_heat_demand_space_{building}"] +
+        profiles_hp[f"DE_heat_demand_water_{building}"] for building in ["SFH", "MFH"]
     ])
     heat_demand.index = timesteps
     # calculate cop and set right timeindex
