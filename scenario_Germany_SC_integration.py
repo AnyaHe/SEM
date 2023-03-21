@@ -121,8 +121,8 @@ if __name__ == "__main__":
             energy_levels = \
                 pd.Series(model_tmp.energy_levels.extract_values()).unstack().T.set_index(
                     new_res_load.index)
-            abs_charging = pd.Series(model_tmp.abs_charging.extract_values()).unstack()
-            df_tmp = (abs_charging.sum(axis=1) / 2).reset_index().rename(
+            discharging = pd.Series(model_tmp.discharging.extract_values()).unstack()
+            df_tmp = (discharging.sum(axis=1)).reset_index().rename(
                 columns={"index": "storage_type", 0: "energy_stored"})
             df_tmp["nr_hp"] = nr_hp_mio
             df_tmp["nr_ev"] = nr_ev_mio
