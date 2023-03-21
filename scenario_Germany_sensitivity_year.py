@@ -50,10 +50,10 @@ if __name__ == "__main__":
     # load scenario values
     for data_source in years_dict.keys():
         for year in years_dict[data_source]:
-            if mode == "generatio":
-                scenario_dict = base_scenario(vres_data_source=data_source, year=year)
+            if mode == "generation":
+                scenario_dict = base_scenario(vres_data_source=data_source, year=year, share_pv=None)
             elif mode == "demand":
-                scenario_dict = base_scenario(demand_data_source=data_source, year=year)
+                scenario_dict = base_scenario(demand_data_source=data_source, year=year, reference_demand=None)
             else:
                 raise ValueError("Mode not defined")
             scenario_dict["hp_mode"] = hp_mode
@@ -92,7 +92,7 @@ if __name__ == "__main__":
             if ev_mode == "flexible":
                 add_evs_model(model, flexibility_bands)
             model = add_storage_equivalent_model(model, new_res_load,
-                                                 time_horizons=[24, 7 * 24, 24 * 366])
+                                                 time_horizons=scenario_dict["time_horizons"])
             model.objective = pm.Objective(rule=minimize_energy,
                                            sense=pm.minimize,
                                            doc='Define objective function')
