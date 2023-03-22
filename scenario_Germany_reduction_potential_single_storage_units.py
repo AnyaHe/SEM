@@ -21,6 +21,7 @@ if __name__ == "__main__":
     plot_results = False
     nr_iterations = 10
     solver = "gurobi"
+    hp_mode = None # None, "flexible", "inflexible"
     ev_mode = "flexible" # None, "flexible", "inflexible"
     tes_relative_size = 4 # in share standard
     ev_extended_flex = True
