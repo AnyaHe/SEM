@@ -59,14 +59,16 @@ def model_input_hps(scenario_dict, hp_mode, i=None, nr_hp_mio=None):
         nr_hp_mio, ts_heat_el, sum_energy_heat, capacity_tes, p_nom_hp, ts_heat_demand
 
 
-def add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, heat_demand):
+def add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, heat_demand,
+                        efficiency_static_tes=0.99, efficiency_dynamic_tes=0.95):
     def energy_conversion_hp(model, time):
         return model.charging_hp_el[time] * cop.loc[model.timeindex[time]] == \
             model.charging_hp_th[time]
 
     def energy_balance_hp_tes(model, time):
         return model.charging_hp_th[time] == \
-               model.heat_demand.loc[model.timeindex[time]] + model.charging_tes[time]
+               model.heat_demand.loc[model.timeindex[time]] + \
+               model.charging_tes[time] - model.discharging_tes[time]
 
     def fixed_energy_level_tes(model, time):
         return model.energy_tes[time] == model.capacity_tes/2
@@ -77,16 +79,22 @@ def add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, heat_demand):
         else:
             energy_pre = model.energy_tes[time-1]
         return model.energy_tes[time] == \
-            energy_pre + model.charging_tes[time] * \
+            model.efficiency_static_tes * energy_pre + \
+            model.efficiency_dynamic_tes * model.charging_tes[time] * \
+            (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h')) - \
+            model.discharging_tes[time] * \
             (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
     # save fix parameters
     model.capacity_tes = capacity_tes
+    model.efficiency_static_tes = efficiency_static_tes
+    model.efficiency_dynamic_tes = efficiency_dynamic_tes
     model.p_nom_hp = p_nom_hp
     model.cop = cop
     model.heat_demand = heat_demand
     # set up variables
     model.energy_tes = pm.Var(model.time_set, bounds=(0, capacity_tes))
-    model.charging_tes = pm.Var(model.time_set)
+    model.charging_tes = pm.Var(model.time_set, bounds=(0, None))
+    model.discharging_tes = pm.Var(model.time_set, bounds=(0, None))
     model.charging_hp_th = pm.Var(model.time_set, bounds=(0, p_nom_hp))
     model.charging_hp_el = pm.Var(model.time_set)
     # add constraints
@@ -113,6 +121,7 @@ def add_hp_energy_level(model, mode="minimize", energy_consumption=None):
         Set initial energy level to 0
         """
         return model.energy_level[time] == 0
+
     def cumulated_energy_level(model, time):
         """
         Define charging of energy level
@@ -120,11 +129,13 @@ def add_hp_energy_level(model, mode="minimize", energy_consumption=None):
         return model.energy_level[time] == model.energy_level[time-1] + \
                model.charging_hp_el[time] * \
                (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
+
     def energy_level_end(model, time):
         """
         Fixing overall energy consumption
         """
         return model.energy_level[time] == energy_consumption
+
     def energy_level_hp(model):
         """
         Objective
