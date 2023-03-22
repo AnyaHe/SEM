@@ -112,6 +112,8 @@ def scenario_input_hps(scenario_dict={}, mode="inflexible", timesteps=None):
     scenario_dict.update({
         "hp_mode": mode,
         "capacity_single_tes": 0.0183 * 1e-3,  # GWh
+        "efficiency_static_tes": 0.99,
+        "efficiency_dynamic_tes": 0.95,
         "p_nom_single_hp": 0.013 * 1e-3,  # GW
         "heat_demand_single_hp": heat_demand_single_hp,  # GWh
         "ts_heat_demand_single_hp":
@@ -176,7 +178,9 @@ def scenario_input_evs(scenario_dict={}, mode="inflexible",
         "ts_ref_charging": ref_charging.loc[timesteps],
         "nr_ev_ref": nr_ev_ref,
         "ev_extended_flex": extended_flex,
-        "ev_v2g": v2g
+        "ev_v2g": v2g,
+        "ev_charging_efficiency": 0.9,
+        "ev_discharging_efficiency": 0.9
     })
     return scenario_dict
 
