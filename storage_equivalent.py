@@ -42,12 +42,18 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
         else:
             hp_el = 0
         if hasattr(model, "charging_ev"):
-            ev = sum([model.charging_ev[cp, time] - model.discharging_ev[cp, time]
-                      for cp in model.charging_points_set])
+            if hasattr(model, "discharging_ev"):
+                discharging = sum(model.discharging_ev[cp, time]
+                                  for cp in model.charging_points_set)
+            else:
+                discharging = 0
+            ev = sum([model.charging_ev[cp, time] for
+                      cp in model.charging_points_set]) - discharging
         else:
             ev = 0
         return sum(model.charging[time_horizon, time] for time_horizon in
-                   model.time_horizons_set) + model.residual_load.iloc[time] + hp_el + ev == 0
+                   model.time_horizons_set) + \
+               model.residual_load.iloc[time] + hp_el + ev == 0
 
     def maximum_charging(model, time_horizon, time):
         return model.charging_max[time_horizon] >= model.charging[time_horizon, time]
