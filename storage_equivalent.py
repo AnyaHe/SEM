@@ -260,13 +260,20 @@ def add_storage_equivalents_model(model, residual_load, connections, flows, **kw
 
 
 def get_slacks(model):
+    # extract slack for simultaneous charging and discharging evs
     if hasattr(model, "discharging_ev"):
         slack_ev = sum(model.charging_ev[cp, time]*model.discharging_ev[cp, time]
                        for cp in model.charging_points_set for time in model.time_set)
     else:
         slack_ev = 0
+    # extract slack for simultaneous charging and discharging tes
+    if hasattr(model, "discharging_tes"):
+        slack_tes = sum(model.charging_tes[time]*model.discharging_tes[time]
+                        for time in model.time_set)
+    else:
+        slack_tes = 0
     return sum(model.slack_res_load_neg[time] + model.slack_res_load_neg[time]
-               for time in model.time_set) + slack_ev
+               for time in model.time_set) + slack_ev + slack_tes
 
 
 def minimize_cap(model):
@@ -279,7 +286,7 @@ def minimize_cap(model):
 
 def minimize_energy(model):
     # todo: determine good weighting factor
-    slacks = get_slacks(model) * 1e8
+    slacks = get_slacks(model) * 1e6
     return sum(model.weighting[time_horizon] * sum(model.abs_charging[time_horizon, time]
                                                    for time in model.time_set)
                for time_horizon in model.time_horizons_set) + slacks
