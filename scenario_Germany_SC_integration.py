@@ -1,9 +1,7 @@
-import numpy as np
 import os
 import pandas as pd
 from pandas.testing import assert_frame_equal
 import pyomo.environ as pm
-import time
 
 import storage_equivalent as se
 from heat_pump_model import add_heat_pump_model, model_input_hps
@@ -56,6 +54,7 @@ if __name__ == "__main__":
     shifted_energy_rel_df = pd.DataFrame()
     storage_durations = pd.DataFrame()
     for i in range(9):
+        print(f"Info: Starting iteration {i} of scenario integration of sector coupling {scenario}")
         # add hps if included
         nr_hp_mio, ts_heat_el, sum_energy_heat, capacity_tes, p_nom_hp, ts_heat_demand = \
             model_input_hps(
@@ -68,50 +67,75 @@ if __name__ == "__main__":
             ev_mode=ev_mode,
             i=i
         )
-        # determine new residual load
-        new_res_load = get_new_residual_load(
-            scenario_dict=scenario_dict,
-            sum_energy_heat=sum_energy_heat,
-            energy_ev=energy_ev,
-            ref_charging=ref_charging,
-            ts_heat_el=ts_heat_el)
 
-        # initialise base model
-        model = se.set_up_base_model(scenario_dict=scenario_dict,
-                                     new_res_load=new_res_load)
-        # add heat pump model if flexible
-        if hp_mode == "flexible":
-            model = add_heat_pump_model(model, p_nom_hp, capacity_tes,
-                                        scenario_dict["ts_cop"], ts_heat_demand)
-        # add ev model if flexible
-        if ev_mode == "flexible":
-            add_evs_model(model, flexibility_bands, v2g=scenario_dict["ev_v2g"])
-        # add storage equivalents
-        model = se.add_storage_equivalent_model(
-            model, new_res_load, time_horizons=scenario_dict["time_horizons"])
-        # define objective
-        model.objective = pm.Objective(rule=getattr(se, scenario_dict["objective"]),
-                                       sense=pm.minimize,
-                                       doc='Define objective function')
-        for iter in range(nr_iterations):
-            model_tmp = model.clone()
-            np.random.seed(int(time.time()))
-            opt = pm.SolverFactory(solver)
-            if solver == "gurobi":
-                opt.options["Seed"] = int(time.time())
-                opt.options["Method"] = 3
+        energy_balanced = False
+        max_iter = 3
+        iter_a = 0
+        tol = 1e-2
+        while (not energy_balanced) & (iter_a < max_iter):
+            print(f"Info: Starting iteration {iter_a} for energy balance.")
+            # determine new residual load
+            new_res_load = get_new_residual_load(
+                scenario_dict=scenario_dict,
+                sum_energy_heat=sum_energy_heat,
+                energy_ev=energy_ev,
+                ref_charging=ref_charging,
+                ts_heat_el=ts_heat_el, )
+
+            # initialise base model
+            model = se.set_up_base_model(scenario_dict=scenario_dict,
+                                         new_res_load=new_res_load)
+            # add heat pump model if flexible
+            if hp_mode == "flexible":
+                model = add_heat_pump_model(model, p_nom_hp, capacity_tes,
+                                            scenario_dict["ts_cop"], ts_heat_demand,
+                                            scenario_dict["efficiency_static_tes"],
+                                            scenario_dict["efficiency_dynamic_tes"])
+            # add ev model if flexible
+            if ev_mode == "flexible":
+                add_evs_model(model, flexibility_bands, v2g=scenario_dict["ev_v2g"],
+                              efficiency=scenario_dict["ev_charging_efficiency"],
+                              discharging_efficiency=scenario_dict["ev_discharging_efficiency"])
+            # add storage equivalents
+            model = se.add_storage_equivalent_model(
+                model, new_res_load, time_horizons=scenario_dict["time_horizons"])
+            # define objective
+            model.objective = pm.Objective(rule=getattr(se, scenario_dict["objective"]),
+                                           sense=pm.minimize,
+                                           doc='Define objective function')
+            model = se.solve_model(model, solver, hp_mode, ev_mode, ev_v2g)
+            # check that energy is balanced
+            energy_hp_balanced = True
+            if hp_mode == "flexible":
+                sum_energy_heat_opt = pd.Series(model.charging_hp_el.extract_values()).sum()
+                if abs(sum_energy_heat_opt - sum_energy_heat) / sum_energy_heat > tol:
+                    energy_hp_balanced = False
+                    sum_energy_heat = sum_energy_heat_opt
+            energy_ev_balanced = True
+            if ev_mode == "flexible":
+                ev_operation = pd.Series(model.charging_ev.extract_values()).unstack().T
                 if ev_v2g:
-                    opt.options["NonConvex"] = 2
+                    ev_operation -= pd.Series(model.discharging_ev.extract_values()).unstack().T
+                energy_ev_opt = ev_operation.sum().sum() + ref_charging.sum()
+                if abs(energy_ev_opt - energy_ev) / energy_ev > tol:
+                    energy_ev_balanced = False
+                    energy_ev = energy_ev_opt
+            if energy_hp_balanced & energy_ev_balanced:
+                energy_balanced = True
+                print(f"Info: Energy balanced in iteration {iter_a}.")
+            iter_a += 1
+        if not energy_balanced:
+            print(f"Warning: Energy not balanced after maximum of {max_iter} iterations.")
 
-            results = opt.solve(model_tmp, tee=True)
-            # check that no simultaneous charging and discharging occurs for v2g
-            if ev_v2g:
-                charging_ev = pd.Series(model_tmp.charging_ev.extract_values()).unstack().T.set_index(
-                    new_res_load.index)
-                discharging_ev = pd.Series(model_tmp.discharging_ev.extract_values()).unstack().T.set_index(
-                    new_res_load.index)
-                if charging_ev.multiply(discharging_ev).sum().sum() > 1e-3:
-                    raise ValueError("Simultaneous charging and discharging of EVs. Please check.")
+        for iter_i in range(nr_iterations):
+            print(f"Info: Starting iteration {iter_i} solving final model.")
+
+            if iter_i == 0:
+                model_tmp = model
+            else:
+                model_tmp = model.clone()
+                model_tmp = se.solve_model(model_tmp, solver, hp_mode, ev_mode, ev_v2g)
+
             # extract results
             charging = pd.Series(model_tmp.charging.extract_values()).unstack().T.set_index(
                 new_res_load.index)
@@ -126,7 +150,8 @@ if __name__ == "__main__":
                 columns={"index": "storage_type", 0: "energy_stored"})
             df_tmp["nr_hp"] = nr_hp_mio
             df_tmp["nr_ev"] = nr_ev_mio
-            if iter == 0:
+
+            if iter_i == 0:
                 charging.to_csv(f"{res_dir}/charging_{i}.csv")
                 energy_levels.to_csv(f"{res_dir}/energy_levels_{i}.csv")
                 # save flexible hp operation
@@ -134,6 +159,14 @@ if __name__ == "__main__":
                     hp_operation = pd.Series(model_tmp.charging_hp_el.extract_values())
                     hp_operation.index = scenario_dict["ts_demand"].index
                     hp_operation.to_csv(f"{res_dir}/hp_charging_flexible.csv")
+                    charging_tes = pd.Series(model_tmp.charging_tes.extract_values())
+                    discharging_tes = pd.Series(model_tmp.discharging_tes.extract_values())
+                    tes_operation = charging_tes - discharging_tes
+                    tes_operation.index = scenario_dict["ts_demand"].index
+                    tes_operation.to_csv(f"{res_dir}/tes_operation_flexible.csv")
+                    tes_energy = pd.Series(model_tmp.energy_tes.extract_values())
+                    tes_energy.index = scenario_dict["ts_demand"].index
+                    tes_energy.to_csv(f"{res_dir}/tes_energy_flexible.csv")
                 # save flexible hp operation
                 if (ev_mode == "flexible") & (nr_ev_mio == 40.0):
                     ev_operation = pd.Series(model_tmp.charging_ev.extract_values()).unstack().T

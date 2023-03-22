@@ -1,7 +1,8 @@
 import pyomo.environ as pm
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-
+import time
 
 from quantification.flexibility_quantification import shifting_time
 
@@ -365,6 +366,30 @@ def determine_storage_durations(charging, index="duration"):
         sdi = shifting_time(charging[storage_type], reference_curve=0)
         storage_durations.loc[index, storage_type] = get_mean_shifting_time(sdi)
     return storage_durations
+
+
+def solve_model(model_tmp, solver, hp_mode=None, ev_mode=None, ev_v2g=False):
+    np.random.seed(int(time.time()))
+    opt = pm.SolverFactory(solver)
+    if solver == "gurobi":
+        opt.options["Seed"] = int(time.time())
+        opt.options["Method"] = 3
+        if (hp_mode == "flexible") or ev_v2g:
+            opt.options["NonConvex"] = 2
+    opt.solve(model_tmp, tee=True)
+    # check that no simultaneous charging and discharging occurs for v2g
+    if (ev_mode == "flexible") & ev_v2g:
+        charging_ev = pd.Series(model_tmp.charging_ev.extract_values()).unstack().T
+        discharging_ev = pd.Series(model_tmp.discharging_ev.extract_values()).unstack().T
+        if charging_ev.multiply(discharging_ev).sum().sum() > 1e-3:
+            raise ValueError("Simultaneous charging and discharging of EVs. Please check.")
+    # check that no simultaneous charging and discharging of TES occurs
+    if hp_mode == "flexible":
+        charging_tes = pd.Series(model_tmp.charging_tes.extract_values())
+        discharging_tes = pd.Series(model_tmp.discharging_tes.extract_values())
+        if charging_tes.multiply(discharging_tes).sum() > 1e-3:
+            raise ValueError("Simultaneous charging and discharging of TES. Please check.")
+    return model_tmp
 
 
 if __name__ == "__main__":
