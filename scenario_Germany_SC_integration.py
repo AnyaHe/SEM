@@ -1,13 +1,12 @@
 import os
 import pandas as pd
 from pandas.testing import assert_frame_equal
-import pyomo.environ as pm
 
 import storage_equivalent as se
-from heat_pump_model import add_heat_pump_model, model_input_hps
-from ev_model import add_evs_model, model_input_evs
+from heat_pump_model import model_input_hps
+from ev_model import model_input_evs
 from scenario_input import base_scenario, scenario_input_hps, save_scenario_dict, \
-    scenario_input_evs, get_new_residual_load, adjust_timeseries_data
+    scenario_input_evs, adjust_timeseries_data
 from plotting import plot_storage_equivalent_germany_stacked
 
 
@@ -68,66 +67,21 @@ if __name__ == "__main__":
             i=i
         )
 
-        energy_balanced = False
-        max_iter = 3
-        iter_a = 0
-        tol = 1e-2
-        while (not energy_balanced) & (iter_a < max_iter):
-            print(f"Info: Starting iteration {iter_a} for energy balance.")
-            # determine new residual load
-            new_res_load = get_new_residual_load(
-                scenario_dict=scenario_dict,
-                sum_energy_heat=sum_energy_heat,
-                energy_ev=energy_ev,
-                ref_charging=ref_charging,
-                ts_heat_el=ts_heat_el, )
-
-            # initialise base model
-            model = se.set_up_base_model(scenario_dict=scenario_dict,
-                                         new_res_load=new_res_load)
-            # add heat pump model if flexible
-            if hp_mode == "flexible":
-                model = add_heat_pump_model(model, p_nom_hp, capacity_tes,
-                                            scenario_dict["ts_cop"], ts_heat_demand,
-                                            scenario_dict["efficiency_static_tes"],
-                                            scenario_dict["efficiency_dynamic_tes"])
-            # add ev model if flexible
-            if ev_mode == "flexible":
-                add_evs_model(model, flexibility_bands, v2g=scenario_dict["ev_v2g"],
-                              efficiency=scenario_dict["ev_charging_efficiency"],
-                              discharging_efficiency=scenario_dict["ev_discharging_efficiency"])
-            # add storage equivalents
-            model = se.add_storage_equivalent_model(
-                model, new_res_load, time_horizons=scenario_dict["time_horizons"])
-            # define objective
-            model.objective = pm.Objective(rule=getattr(se, scenario_dict["objective"]),
-                                           sense=pm.minimize,
-                                           doc='Define objective function')
-            model = se.solve_model(model, solver, hp_mode, ev_mode, ev_v2g)
-            # check that energy is balanced
-            energy_hp_balanced = True
-            if hp_mode == "flexible":
-                sum_energy_heat_opt = pd.Series(model.charging_hp_el.extract_values()).sum()
-                if abs(sum_energy_heat_opt - sum_energy_heat) / sum_energy_heat > tol:
-                    energy_hp_balanced = False
-                    sum_energy_heat = sum_energy_heat_opt
-            energy_ev_balanced = True
-            if ev_mode == "flexible":
-                ev_operation = pd.Series(model.charging_ev.extract_values()).unstack().T
-                if ev_v2g:
-                    ev_operation -= pd.Series(model.discharging_ev.extract_values()).unstack().T
-                energy_ev_opt = ev_operation.sum().sum() + ref_charging.sum()
-                if abs(energy_ev_opt - energy_ev) / energy_ev > tol:
-                    energy_ev_balanced = False
-                    energy_ev = energy_ev_opt
-            if energy_hp_balanced & energy_ev_balanced:
-                energy_balanced = True
-                print(f"Info: Energy balanced in iteration {iter_a}.")
-            iter_a += 1
-        if not energy_balanced:
-            print(f"Warning: Energy not balanced after maximum of {max_iter} iterations.")
+        model, new_res_load = se.get_balanced_storage_equivalent_model(
+            scenario_dict=scenario_dict,
+            max_iter=max_iteration_balance,
+            ref_charging=ref_charging,
+            flexibility_bands=flexibility_bands,
+            energy_ev=energy_ev,
+            ts_heat_el=ts_heat_el,
+            sum_energy_heat=sum_energy_heat,
+            ts_heat_demand=ts_heat_demand,
+            p_nom_hp=p_nom_hp,
+            capacity_tes=capacity_tes,
+        )
 
         for iter_i in range(nr_iterations):
+
             print(f"Info: Starting iteration {iter_i} solving final model.")
 
             if iter_i == 0:

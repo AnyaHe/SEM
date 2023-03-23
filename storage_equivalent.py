@@ -5,6 +5,9 @@ import matplotlib.pyplot as plt
 import time
 
 from quantification.flexibility_quantification import shifting_time
+from scenario_input import get_new_residual_load
+from heat_pump_model import add_heat_pump_model
+from ev_model import add_evs_model
 
 
 def set_up_base_model(scenario_dict, new_res_load):
@@ -368,7 +371,7 @@ def determine_storage_durations(charging, index="duration"):
     return storage_durations
 
 
-def solve_model(model_tmp, solver, hp_mode=None, ev_mode=None, ev_v2g=False):
+def solve_model(model, solver, hp_mode=None, ev_mode=None, ev_v2g=False):
     np.random.seed(int(time.time()))
     opt = pm.SolverFactory(solver)
     if solver == "gurobi":
@@ -376,20 +379,118 @@ def solve_model(model_tmp, solver, hp_mode=None, ev_mode=None, ev_v2g=False):
         opt.options["Method"] = 3
         if (hp_mode == "flexible") or ev_v2g:
             opt.options["NonConvex"] = 2
-    opt.solve(model_tmp, tee=True)
+    opt.solve(model, tee=True)
     # check that no simultaneous charging and discharging occurs for v2g
     if (ev_mode == "flexible") & ev_v2g:
-        charging_ev = pd.Series(model_tmp.charging_ev.extract_values()).unstack().T
-        discharging_ev = pd.Series(model_tmp.discharging_ev.extract_values()).unstack().T
+        charging_ev = pd.Series(model.charging_ev.extract_values()).unstack().T
+        discharging_ev = pd.Series(model.discharging_ev.extract_values()).unstack().T
         if charging_ev.multiply(discharging_ev).sum().sum() > 1e-3:
             raise ValueError("Simultaneous charging and discharging of EVs. Please check.")
     # check that no simultaneous charging and discharging of TES occurs
     if hp_mode == "flexible":
-        charging_tes = pd.Series(model_tmp.charging_tes.extract_values())
-        discharging_tes = pd.Series(model_tmp.discharging_tes.extract_values())
+        charging_tes = pd.Series(model.charging_tes.extract_values())
+        discharging_tes = pd.Series(model.discharging_tes.extract_values())
         if charging_tes.multiply(discharging_tes).sum() > 1e-3:
             raise ValueError("Simultaneous charging and discharging of TES. Please check.")
-    return model_tmp
+    # extract results
+    slacks = pd.Series(model.slack_res_load_neg.extract_values()) + \
+             pd.Series(model.slack_res_load_pos.extract_values())
+    if slacks.sum() > 1e-9:
+        raise ValueError("Slacks are being used. Please check. Consider increasing "
+                         "weights.")
+    return model
+
+
+def get_balanced_storage_equivalent_model(scenario_dict, max_iter=3, tol=1e-2,
+                                          **kwargs):
+    """
+    Method to set up base model which is balanced in terms of energy consumption
+    and supply. Necessary because of losses of TES and V2G.
+
+    :param scenario_dict:
+    :param max_iter:
+    :param tol:
+    :param kwargs:
+    :return:
+    """
+    # initialise values
+    energy_balanced = False
+    iter_a = 0
+
+    ref_charging = kwargs.get("ref_charging", None)
+    sum_energy_heat = kwargs.get("sum_energy_heat", 0)
+    energy_ev = kwargs.get("energy_ev", 0)
+
+    while (not energy_balanced) & (iter_a < max_iter):
+        print(f"Info: Starting iteration {iter_a} for energy balance.")
+        # determine new residual load
+        new_res_load = get_new_residual_load(
+            scenario_dict=scenario_dict,
+            sum_energy_heat=sum_energy_heat,
+            energy_ev=energy_ev,
+            ref_charging=ref_charging,
+            ts_heat_el=kwargs.get("ts_heat_el", None) )
+
+        # initialise base model
+        model = set_up_base_model(scenario_dict=scenario_dict,
+                                     new_res_load=new_res_load)
+        # add heat pump model if flexible
+        if scenario_dict["hp_mode"] == "flexible":
+            model = add_heat_pump_model(
+                model=model,
+                p_nom_hp=kwargs["p_nom_hp"],
+                capacity_tes=kwargs["capacity_tes"],
+                cop=scenario_dict["ts_cop"],
+                heat_demand=kwargs["ts_heat_demand"],
+                efficiency_static_tes=scenario_dict["efficiency_static_tes"],
+                efficiency_dynamic_tes=scenario_dict["efficiency_dynamic_tes"]
+            )
+        # add ev model if flexible
+        if scenario_dict["ev_mode"] == "flexible":
+            add_evs_model(
+                model=model,
+                flex_bands=kwargs["flexibility_bands"],
+                v2g=scenario_dict["ev_v2g"],
+                efficiency=scenario_dict["ev_charging_efficiency"],
+                discharging_efficiency=scenario_dict["ev_discharging_efficiency"]
+            )
+        # add storage equivalents
+        model = add_storage_equivalent_model(
+            model, new_res_load,
+            time_horizons=scenario_dict["time_horizons"],
+            fixed_shifted_energy=kwargs.get("fixed_shifted_energy"))
+        # define objective
+        model.objective = pm.Objective(rule=globals()[scenario_dict["objective"]],
+                                       sense=pm.minimize,
+                                       doc='Define objective function')
+        model = solve_model(model=model,
+                            solver=scenario_dict["solver"],
+                            hp_mode=scenario_dict["hp_mode"],
+                            ev_mode=scenario_dict["ev_mode"],
+                            ev_v2g=scenario_dict.get("ev_v2g",False))
+        # check that energy is balanced
+        energy_hp_balanced = True
+        if scenario_dict["hp_mode"] == "flexible":
+            sum_energy_heat_opt = pd.Series(model.charging_hp_el.extract_values()).sum()
+            if abs(sum_energy_heat_opt - sum_energy_heat) / sum_energy_heat > tol:
+                energy_hp_balanced = False
+                sum_energy_heat = sum_energy_heat_opt
+        energy_ev_balanced = True
+        if scenario_dict["ev_mode"] == "flexible":
+            ev_operation = pd.Series(model.charging_ev.extract_values()).unstack().T
+            if scenario_dict["ev_v2g"]:
+                ev_operation -= pd.Series(model.discharging_ev.extract_values()).unstack().T
+            energy_ev_opt = ev_operation.sum().sum() + ref_charging.sum()
+            if abs(energy_ev_opt - energy_ev) / energy_ev > tol:
+                energy_ev_balanced = False
+                energy_ev = energy_ev_opt
+        if energy_hp_balanced & energy_ev_balanced:
+            energy_balanced = True
+            print(f"Info: Energy balanced in iteration {iter_a}.")
+        iter_a += 1
+    if not energy_balanced:
+        print(f"Warning: Energy not balanced after maximum of {max_iter} iterations.")
+    return model, new_res_load
 
 
 if __name__ == "__main__":
