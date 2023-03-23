@@ -84,7 +84,7 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
                -model.charging[time_horizon, time]
 
     def fixed_shifted_energy(model, time_horizon):
-        return sum(model.abs_charging[time_horizon, time]
+        return sum(model.discharging[time_horizon, time]
                    for time in model.time_set) <= \
             model.fixed_shifted_energy[time_horizon]
 
