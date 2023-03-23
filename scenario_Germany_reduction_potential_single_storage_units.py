@@ -57,6 +57,7 @@ if __name__ == "__main__":
     shifted_energy_rel_df = pd.DataFrame()
     storage_durations = pd.DataFrame()
     for i in range(9):
+        print(f"Info: Starting iteration {i} of scenario integration of sector coupling {scenario}")
         # add hps if included
         nr_hp_mio, ts_heat_el, sum_energy_heat, capacity_tes, p_nom_hp, ts_heat_demand = \
             model_input_hps(
@@ -69,55 +70,40 @@ if __name__ == "__main__":
             ev_mode=ev_mode,
             i=i
         )
-        # determine new residual load
-        new_res_load = get_new_residual_load(
-            scenario_dict=scenario_dict,
-            sum_energy_heat=sum_energy_heat,
-            energy_ev=energy_ev,
-            ref_charging=ref_charging,
-            ts_heat_el=ts_heat_el)
         # get shifted energy from other storage units
         charging_ref = pd.read_csv(f"{res_dir_ref}/charging_{i}.csv", index_col=0,
                                    parse_dates=True)
         charging_ref.columns = [int(col) for col in charging_ref.columns]
         shifted_enery_ref = charging_ref[
-            charging_ref.columns[charging_ref.columns != storage_type]].abs().sum()
-        # initialise base model
-        model = se.set_up_base_model(scenario_dict=scenario_dict,
-                                     new_res_load=new_res_load)
-        # add heat pump model if flexible
-        if hp_mode == "flexible":
-            model = add_heat_pump_model(model, p_nom_hp, capacity_tes,
-                                        scenario_dict["ts_cop"], ts_heat_demand)
-        # add ev model if flexible
-        if ev_mode == "flexible":
-            add_evs_model(model, flexibility_bands, v2g=scenario_dict["ev_v2g"])
-        # add storage equivalents
-        model = se.add_storage_equivalent_model(
-            model, new_res_load,
-            time_horizons=scenario_dict["time_horizons"],
-            fixed_shifted_energy=shifted_enery_ref)
-        # define objective
-        model.objective = pm.Objective(rule=getattr(se, scenario_dict["objective"]),
-                                       sense=pm.minimize,
-                                       doc='Define objective function')
-        for iter in range(nr_iterations):
-            model_tmp = model.clone()
-            np.random.seed(int(time.time()))
-            opt = pm.SolverFactory(solver)
-            if solver == "gurobi":
-                opt.options["Seed"] = int(time.time())
-                opt.options["Method"] = 3
+            charging_ref.columns[charging_ref.columns != storage_type]]
+        shifted_enery_ref = shifted_enery_ref[shifted_enery_ref < 0].abs().sum()
 
-            results = opt.solve(model_tmp, tee=True)
-            # extract results
-            slacks = pd.Series(model_tmp.slack_res_load_neg.extract_values()) + \
-                     pd.Series(model_tmp.slack_res_load_pos.extract_values())
-            if slacks.sum() > 1e-9:
-                raise ValueError("Slacks are being used. Please check. Consider increasing "
-                                 "weights.")
+        model, new_res_load = se.get_balanced_storage_equivalent_model(
+            scenario_dict=scenario_dict,
+            ref_charging=ref_charging,
+            flexibility_bands=flexibility_bands,
+            energy_ev=energy_ev,
+            ts_heat_el=ts_heat_el,
+            sum_energy_heat=sum_energy_heat,
+            ts_heat_demand=ts_heat_demand,
+            p_nom_hp=p_nom_hp,
+            capacity_tes=capacity_tes,
+            fixed_shifted_energy=shifted_enery_ref
+        )
+
+        for iter_i in range(nr_iterations):
+
+            print(f"Info: Starting iteration {iter_i} solving final model.")
+
+            if iter_i == 0:
+                model_tmp = model
+            else:
+                model_tmp = model.clone()
+                model_tmp = se.solve_model(model_tmp, solver, hp_mode, ev_mode, ev_v2g)
+
             charging = pd.Series(model_tmp.charging.extract_values()).unstack().T.set_index(
                 new_res_load.index)
+
             if extract_storage_duration:
                 storage_durations = pd.concat([storage_durations,
                                                se.determine_storage_durations(charging, i)])
@@ -129,7 +115,7 @@ if __name__ == "__main__":
                 columns={"index": "storage_type", 0: "energy_stored"})
             df_tmp["nr_hp"] = nr_hp_mio
             df_tmp["nr_ev"] = nr_ev_mio
-            if iter == 0:
+            if iter_i == 0:
                 charging.to_csv(f"{res_dir}/charging_{i}.csv")
                 energy_levels.to_csv(f"{res_dir}/energy_levels_{i}.csv")
                 # save flexible hp operation
