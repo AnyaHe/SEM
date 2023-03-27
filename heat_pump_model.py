@@ -60,15 +60,22 @@ def model_input_hps(scenario_dict, hp_mode, i=None, nr_hp_mio=None):
 
 
 def add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, heat_demand,
-                        efficiency_static_tes=0.99, efficiency_dynamic_tes=0.95):
+                        efficiency_static_tes=0.99, efficiency_dynamic_tes=0.95,
+                        use_binaries=False):
     def energy_conversion_hp(model, time):
         return model.charging_hp_el[time] * cop.loc[model.timeindex[time]] == \
             model.charging_hp_th[time]
 
     def energy_balance_hp_tes(model, time):
+        if model.use_binaries_hp:
+            charging = model.y_charge_tes[time] * model.charging_tes[time]
+            discharging = model.y_discharge_tes[time] * model.discharging_tes[time]
+        else:
+            charging = model.charging_tes[time]
+            discharging = model.discharging_tes[time]
         return model.charging_hp_th[time] == \
                model.heat_demand.loc[model.timeindex[time]] + \
-               model.charging_tes[time] - model.discharging_tes[time]
+               charging - discharging
 
     def fixed_energy_level_tes(model, time):
         return model.energy_tes[time] == model.capacity_tes/2
@@ -78,12 +85,21 @@ def add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, heat_demand,
             energy_pre = model.capacity_tes/2
         else:
             energy_pre = model.energy_tes[time-1]
+        if model.use_binaries_hp:
+            charging = model.y_charge_tes[time] * model.charging_tes[time]
+            discharging = model.y_discharge_tes[time] * model.discharging_tes[time]
+        else:
+            charging = model.charging_tes[time]
+            discharging = model.discharging_tes[time]
         return model.energy_tes[time] == \
             model.efficiency_static_tes * energy_pre + \
-            model.efficiency_dynamic_tes * model.charging_tes[time] * \
+            model.efficiency_dynamic_tes * charging * \
             (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h')) - \
-            model.discharging_tes[time] * \
+            discharging * \
             (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
+
+    def charge_discharge_tes_binaries(model, time):
+        return model.y_charge_tes[time] + model.y_discharge_tes[time] <= 1
     # save fix parameters
     model.capacity_tes = capacity_tes
     model.efficiency_static_tes = efficiency_static_tes
@@ -91,17 +107,32 @@ def add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, heat_demand,
     model.p_nom_hp = p_nom_hp
     model.cop = cop
     model.heat_demand = heat_demand
+    model.use_binaries_hp = use_binaries
     # set up variables
+    model.charging_hp_th = pm.Var(model.time_set, bounds=(0, p_nom_hp))
+    model.charging_hp_el = pm.Var(model.time_set)
     model.energy_tes = pm.Var(model.time_set, bounds=(0, capacity_tes))
     model.charging_tes = pm.Var(model.time_set, bounds=(0, None))
     model.discharging_tes = pm.Var(model.time_set, bounds=(0, None))
-    model.charging_hp_th = pm.Var(model.time_set, bounds=(0, p_nom_hp))
-    model.charging_hp_el = pm.Var(model.time_set)
+    if use_binaries is True:
+        model.y_charge_tes = pm.Var(
+            model.time_set,
+            within=pm.Binary,
+            doc='Binary defining for each timestep t if TES is charging'
+        )
+        model.y_discharge_tes = pm.Var(
+            model.time_set,
+            within=pm.Binary,
+            doc='Binary defining for each timestep t if TES is discharging'
+        )
     # add constraints
     model.EnergyConversionHP = pm.Constraint(model.time_set, rule=energy_conversion_hp)
     model.EnergyBalanceHPTES = pm.Constraint(model.time_set, rule=energy_balance_hp_tes)
     model.FixedEnergyTES = pm.Constraint(model.times_fixed_soc, rule=fixed_energy_level_tes)
     model.ChargingTES = pm.Constraint(model.time_set, rule=charging_tes)
+    if use_binaries:
+        model.NoSimultaneousChargingAndDischargingTES = pm.Constraint(
+            model.time_set, rule=charge_discharge_tes_binaries)
     return model
 
 

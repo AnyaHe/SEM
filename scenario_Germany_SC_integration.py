@@ -41,7 +41,8 @@ if __name__ == "__main__":
     scenario_dict["solver"] = solver
     # scenario_dict["weighting"] = weights
     if hp_mode is not None:
-        scenario_dict = scenario_input_hps(scenario_dict=scenario_dict, mode=hp_mode)
+        scenario_dict = scenario_input_hps(scenario_dict=scenario_dict, mode=hp_mode,
+                                           use_binaries=use_binaries)
         scenario_dict["capacity_single_tes"] = \
             tes_relative_size * scenario_dict["capacity_single_tes"]
     if ev_mode is not None:
@@ -119,6 +120,9 @@ if __name__ == "__main__":
                     hp_operation.to_csv(f"{res_dir}/hp_charging_flexible.csv")
                     charging_tes = pd.Series(model_tmp.charging_tes.extract_values())
                     discharging_tes = pd.Series(model_tmp.discharging_tes.extract_values())
+                    if use_binaries:
+                        charging_tes *= pd.Series(model_tmp.y_charge_tes.extract_values())
+                        discharging_tes *= pd.Series(model_tmp.y_discharge_tes.extract_values())
                     tes_operation = charging_tes - discharging_tes
                     tes_operation.index = scenario_dict["ts_demand"].index
                     tes_operation.to_csv(f"{res_dir}/tes_operation_flexible.csv")

@@ -166,7 +166,7 @@ def add_evs_model(model, flex_bands, efficiency=0.9, v2g=False,
     model.EVCharging = pm.Constraint(model.charging_points_set, model.time_set,
                                      rule=charging_ev)
     if use_binaries:
-        model.NoSimultaneousChargingAndDischarging = pm.Constraint(
+        model.NoSimultaneousChargingAndDischargingEV = pm.Constraint(
             model.charging_points_set, model.time_set,
             rule=charge_discharge_ev_binaries)
     model.FixedEVEnergyLevel = \

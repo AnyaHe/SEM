@@ -281,7 +281,7 @@ def get_slacks(model):
     else:
         slack_ev = 0
     # extract slack for simultaneous charging and discharging tes
-    if hasattr(model, "discharging_tes"):
+    if hasattr(model, "discharging_tes") and not model.use_binaries_hp:
         slack_tes = sum(model.charging_tes[time]*model.discharging_tes[time]
                         for time in model.time_set)
     else:
@@ -406,6 +406,9 @@ def solve_model(model, solver, hp_mode=None, ev_mode=None, ev_v2g=False):
     if hp_mode == "flexible":
         charging_tes = pd.Series(model.charging_tes.extract_values())
         discharging_tes = pd.Series(model.discharging_tes.extract_values())
+        if model.use_binaries_hp:
+            charging_tes *= pd.Series(model.y_charge_tes.extract_values())
+            discharging_tes *= pd.Series(model.y_discharge_tes.extract_values())
         if charging_tes.multiply(discharging_tes).sum() > 1e-3:
             raise ValueError("Simultaneous charging and discharging of TES. Please check.")
     # extract results
@@ -436,7 +439,6 @@ def get_balanced_storage_equivalent_model(scenario_dict, max_iter=3, tol=1e-2,
     ref_charging = kwargs.get("ref_charging", None)
     sum_energy_heat = kwargs.get("sum_energy_heat", 0)
     energy_ev = kwargs.get("energy_ev", 0)
-    use_binaries = kwargs.get("use_binaries", False)
 
     while (not energy_balanced) & (iter_a < max_iter):
         print(f"Info: Starting iteration {iter_a} for energy balance.")
@@ -460,7 +462,8 @@ def get_balanced_storage_equivalent_model(scenario_dict, max_iter=3, tol=1e-2,
                 cop=scenario_dict["ts_cop"],
                 heat_demand=kwargs["ts_heat_demand"],
                 efficiency_static_tes=scenario_dict["efficiency_static_tes"],
-                efficiency_dynamic_tes=scenario_dict["efficiency_dynamic_tes"]
+                efficiency_dynamic_tes=scenario_dict["efficiency_dynamic_tes"],
+                use_binaries=scenario_dict["hp_use_binaries"]
             )
         # add ev model if flexible
         if scenario_dict["ev_mode"] == "flexible":
@@ -470,7 +473,7 @@ def get_balanced_storage_equivalent_model(scenario_dict, max_iter=3, tol=1e-2,
                 v2g=scenario_dict["ev_v2g"],
                 efficiency=scenario_dict["ev_charging_efficiency"],
                 discharging_efficiency=scenario_dict["ev_discharging_efficiency"],
-                use_binaries=use_binaries
+                use_binaries=scenario_dict["ev_use_binaries"]
             )
         # add storage equivalents
         model = add_storage_equivalent_model(

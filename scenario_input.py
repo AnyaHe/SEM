@@ -83,7 +83,8 @@ def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
     }
 
 
-def scenario_input_hps(scenario_dict={}, mode="inflexible", timesteps=None):
+def scenario_input_hps(scenario_dict={}, mode="inflexible", timesteps=None,
+                       use_binaries=False):
     """
     Method to add relevant information on modelled hps
     :param scenario_dict: dict
@@ -114,6 +115,7 @@ def scenario_input_hps(scenario_dict={}, mode="inflexible", timesteps=None):
         "capacity_single_tes": 0.0183 * 1e-3,  # GWh
         "efficiency_static_tes": 0.99,
         "efficiency_dynamic_tes": 0.95,
+        "hp_use_binaries": use_binaries,
         "p_nom_single_hp": 0.013 * 1e-3,  # GW
         "heat_demand_single_hp": heat_demand_single_hp,  # GWh
         "ts_heat_demand_single_hp":
