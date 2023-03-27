@@ -47,12 +47,22 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
             hp_el = 0
         if hasattr(model, "charging_ev"):
             if hasattr(model, "discharging_ev"):
-                discharging = sum(model.discharging_ev[cp, time]
-                                  for cp in model.charging_points_set)
+                if model.use_binaries_ev:
+                    discharging_ev = sum(model.y_discharge_ev[cp, time] *
+                                      model.discharging_ev[cp, time]
+                                      for cp in model.charging_points_set)
+                else:
+                    discharging_ev = sum(model.discharging_ev[cp, time]
+                                      for cp in model.charging_points_set)
             else:
-                discharging = 0
-            ev = sum([model.charging_ev[cp, time] for
-                      cp in model.charging_points_set]) - discharging
+                discharging_ev = 0
+            if model.use_binaries_ev:
+                charging_ev = sum([model.y_charge_ev[cp, time] * model.charging_ev[cp, time]
+                                for cp in model.charging_points_set])
+            else:
+                charging_ev = sum([model.charging_ev[cp, time]
+                                for cp in model.charging_points_set])
+            ev = charging_ev - discharging_ev
         else:
             ev = 0
         return sum(model.charging[time_horizon, time] for time_horizon in
@@ -265,7 +275,7 @@ def add_storage_equivalents_model(model, residual_load, connections, flows, **kw
 
 def get_slacks(model):
     # extract slack for simultaneous charging and discharging evs
-    if hasattr(model, "discharging_ev"):
+    if hasattr(model, "discharging_ev") and not model.use_binaries_ev:
         slack_ev = sum(model.charging_ev[cp, time]*model.discharging_ev[cp, time]
                        for cp in model.charging_points_set for time in model.time_set)
     else:
@@ -384,7 +394,13 @@ def solve_model(model, solver, hp_mode=None, ev_mode=None, ev_v2g=False):
     if (ev_mode == "flexible") & ev_v2g:
         charging_ev = pd.Series(model.charging_ev.extract_values()).unstack().T
         discharging_ev = pd.Series(model.discharging_ev.extract_values()).unstack().T
-        if charging_ev.multiply(discharging_ev).sum().sum() > 1e-3:
+        if model.use_binaries_ev:
+            y_charge_ev = pd.Series(model.y_charge_ev.extract_values()).unstack().T
+            y_discharge_ev = pd.Series(model.y_discharge_ev.extract_values()).unstack().T
+            prefactor = y_charge_ev.multiply(y_discharge_ev)
+        else:
+            prefactor = 1
+        if charging_ev.multiply(discharging_ev).multiply(prefactor).sum().sum() > 1e-3:
             raise ValueError("Simultaneous charging and discharging of EVs. Please check.")
     # check that no simultaneous charging and discharging of TES occurs
     if hp_mode == "flexible":
@@ -420,6 +436,7 @@ def get_balanced_storage_equivalent_model(scenario_dict, max_iter=3, tol=1e-2,
     ref_charging = kwargs.get("ref_charging", None)
     sum_energy_heat = kwargs.get("sum_energy_heat", 0)
     energy_ev = kwargs.get("energy_ev", 0)
+    use_binaries = kwargs.get("use_binaries", False)
 
     while (not energy_balanced) & (iter_a < max_iter):
         print(f"Info: Starting iteration {iter_a} for energy balance.")
@@ -452,7 +469,8 @@ def get_balanced_storage_equivalent_model(scenario_dict, max_iter=3, tol=1e-2,
                 flex_bands=kwargs["flexibility_bands"],
                 v2g=scenario_dict["ev_v2g"],
                 efficiency=scenario_dict["ev_charging_efficiency"],
-                discharging_efficiency=scenario_dict["ev_discharging_efficiency"]
+                discharging_efficiency=scenario_dict["ev_discharging_efficiency"],
+                use_binaries=use_binaries
             )
         # add storage equivalents
         model = add_storage_equivalent_model(

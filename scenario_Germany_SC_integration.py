@@ -16,15 +16,17 @@ if __name__ == "__main__":
     plot_results = False
     vres_data_source = "ego"
     year = 2011 # solar_min: 1981, solar_max: 2003, wind_min: 2010, wind_max: 1990
-    nr_iterations = 10
+    nr_iterations = 1
+    max_iteration_balance = 5
     solver = "gurobi"
     hp_mode = "inflexible" # None, "flexible", "inflexible"
     ev_mode = None # None, "flexible", "inflexible"
     tes_relative_size = 4 # in share standard
     ev_extended_flex = True
     ev_v2g = True
-    flexible_ev_use_cases = ["home", "work", "public"]
-    if ev_extended_flex:
+    flexible_ev_use_cases = ["home", "work"]
+    use_binaries = True
+    if ev_extended_flex or ev_v2g:
         flexible_ev_use_cases = ["home", "work", "public"]
     # relative_weighting = 1000
     # weights = [relative_weighting, relative_weighting**2,
@@ -45,7 +47,8 @@ if __name__ == "__main__":
     if ev_mode is not None:
         scenario_dict = scenario_input_evs(scenario_dict=scenario_dict, mode=ev_mode,
                                            use_cases_flexible=flexible_ev_use_cases,
-                                           extended_flex=ev_extended_flex, v2g=ev_v2g)
+                                           extended_flex=ev_extended_flex, v2g=ev_v2g,
+                                           use_binaries=use_binaries)
     # shift timeseries
     scenario_dict = adjust_timeseries_data(scenario_dict)
     # initialise result
@@ -78,6 +81,7 @@ if __name__ == "__main__":
             ts_heat_demand=ts_heat_demand,
             p_nom_hp=p_nom_hp,
             capacity_tes=capacity_tes,
+            use_binaries=use_binaries
         )
 
         for iter_i in range(nr_iterations):
@@ -121,11 +125,17 @@ if __name__ == "__main__":
                     tes_energy = pd.Series(model_tmp.energy_tes.extract_values())
                     tes_energy.index = scenario_dict["ts_demand"].index
                     tes_energy.to_csv(f"{res_dir}/tes_energy_flexible.csv")
-                # save flexible hp operation
+                # save flexible ev operation
                 if (ev_mode == "flexible") & (nr_ev_mio == 40.0):
                     ev_operation = pd.Series(model_tmp.charging_ev.extract_values()).unstack().T
                     if ev_v2g:
-                        ev_operation -= pd.Series(model_tmp.discharging_ev.extract_values()).unstack().T
+                        if use_binaries:
+                            ev_operation *= pd.Series(model_tmp.y_charge_ev.extract_values()).unstack().T
+                            ev_operation -= pd.Series(model_tmp.discharging_ev.extract_values()).unstack().T.multiply(
+                                pd.Series(model_tmp.y_discharge_ev.extract_values()).unstack().T
+                            )
+                        else:
+                            ev_operation -= pd.Series(model_tmp.discharging_ev.extract_values()).unstack().T
                     ev_operation.index = scenario_dict["ts_demand"].index
                     ev_operation.to_csv(f"{res_dir}/ev_charging_flexible.csv")
                 shifted_energy_df = pd.concat([shifted_energy_df, df_tmp])

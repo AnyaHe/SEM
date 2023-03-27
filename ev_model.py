@@ -74,7 +74,7 @@ def add_ev_model(model, flex_bands, charging_efficiency=0.9, v2g=False,
 
 
 def add_evs_model(model, flex_bands, efficiency=0.9, v2g=False,
-                 discharging_efficiency=0.9):
+                  discharging_efficiency=0.9, use_binaries=False):
     def charging_ev(model, cp, time):
         """
         Constraint for charging of EV that has to ly between the lower and upper
@@ -93,15 +93,23 @@ def add_evs_model(model, flex_bands, efficiency=0.9, v2g=False,
             energy_level_pre = model.energy_level_ev[cp, time - 1]
         # get discharging is v2g is allowed
         if hasattr(model, "discharging_ev"):
-            discharging = model.discharging_ev[cp, time]
+            if model.use_binaries_ev:
+                discharging = model.y_discharge_ev[cp, time] * model.discharging_ev[cp, time]
+            else:
+                discharging = model.discharging_ev[cp, time]
         else:
             discharging = 0
+        # get charging
+        if model.use_binaries_ev:
+            charging = model.y_charge_ev[cp, time] * model.charging_ev[cp, time]
+        else:
+            charging = model.charging_ev[cp, time]
         # get time increment
         delta_t = (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
         return model.energy_level_ev[cp, time] == \
             energy_level_pre + \
-            model.charging_efficiency * model.charging_ev[cp, time] * delta_t - \
-            discharging / model.discharging_efficiency * delta_t
+            model.charging_efficiency_ev * charging * delta_t - \
+            discharging / model.discharging_efficiency_ev * delta_t
 
     def fixed_energy_level(model, cp, time):
         '''
@@ -115,10 +123,14 @@ def add_evs_model(model, flex_bands, efficiency=0.9, v2g=False,
                (model.flex_bands["lower_energy"].iloc[time][cp] +
                 model.flex_bands["upper_energy"].iloc[time][cp]) / 2
 
+    def charge_discharge_ev_binaries(model, cp, time):
+        return model.y_charge_ev[cp, time] + model.y_discharge_ev[cp, time] <= 1
+
     # save fix parameters
-    model.charging_efficiency = efficiency
-    model.discharging_efficiency = discharging_efficiency
+    model.charging_efficiency_ev = efficiency
+    model.discharging_efficiency_ev = discharging_efficiency
     model.flex_bands = flex_bands
+    model.use_binaries_ev = use_binaries
     # set up set
     model.charging_points_set = \
         pm.Set(initialize=model.flex_bands["lower_energy"].columns)
@@ -132,6 +144,19 @@ def add_evs_model(model, flex_bands, efficiency=0.9, v2g=False,
             pm.Var(model.charging_points_set, model.time_set,
                    bounds=lambda m, cp, t:
                    (0, m.flex_bands["upper_power"].iloc[t][cp]))
+        if use_binaries is True:
+            model.y_charge_ev = pm.Var(
+                model.charging_points_set,
+                model.time_set,
+                within=pm.Binary,
+                doc='Binary defining for each car c and timestep t if it is charging'
+            )
+            model.y_discharge_ev = pm.Var(
+                model.charging_points_set,
+                model.time_set,
+                within=pm.Binary,
+                doc='Binary defining for each car c and timestep t if it is discharging'
+            )
     model.energy_level_ev = \
         pm.Var(model.charging_points_set, model.time_set,
                bounds=lambda m, cp, t:
@@ -140,6 +165,10 @@ def add_evs_model(model, flex_bands, efficiency=0.9, v2g=False,
     # add constraints
     model.EVCharging = pm.Constraint(model.charging_points_set, model.time_set,
                                      rule=charging_ev)
+    if use_binaries:
+        model.NoSimultaneousChargingAndDischarging = pm.Constraint(
+            model.charging_points_set, model.time_set,
+            rule=charge_discharge_ev_binaries)
     model.FixedEVEnergyLevel = \
         pm.Constraint(model.charging_points_set, model.times_fixed_soc,
                       rule=fixed_energy_level)
