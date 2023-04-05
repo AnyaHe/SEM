@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 import os
+import shutil
+
 
 BANDS = ["upper_power", "upper_energy", "lower_energy"]
 
@@ -124,16 +126,117 @@ def extract_relevant_data_from_entso(data_dir, save_dir, years=None):
     generation.to_csv(f"{save_dir}/vres_entso-e.csv")
 
 
+def copy_simbev_data_bevs(grid_dir, grid_ids):
+    """
+    Method to copy simbev data of BEVs into new directory to be able to use tracBEV
+    to create new reference charging timeseries.
+
+    :param grid_dir: str
+        Directory where grids are stored. Each grid has to have a subfolder "simbev_run",
+        where the data from a previous simbev run is stored. The cleaned data will be
+        copied to a new folder "simbev_bevs". The folder structure will be the same as
+        in the original simbev run.
+    :param grid_ids: list of int or str
+        List of mv grid ids of which the data should be copied.
+    :return:
+    """
+    for grid_id in grid_ids:
+        dirs = os.listdir(os.path.join(grid_dir, str(grid_id), "simbev_run"))
+        for dir_tmp in dirs:
+            dir_tmp_full = os.path.join(grid_dir, str(grid_id), "simbev_run", dir_tmp)
+            if os.path.isdir(dir_tmp_full):
+                evs = os.listdir(dir_tmp_full)
+                for ev in evs:
+                    if "bev" in ev:
+                        old_dir = os.path.join(dir_tmp_full, ev)
+                        new_dir = os.path.join(grid_dir, str(grid_id), "simbev_bevs", dir_tmp)
+                        os.makedirs(new_dir, exist_ok=True)
+                        new_dir = os.path.join(new_dir, ev)
+                        shutil.copy(old_dir, new_dir)
+    print("Copied simBEV data for BEVS.")
+
+
+def create_reference_charging_timeseries(grid_dir, grid_ids, simbev_folder="simbev_bevs",
+                                         efficiency=0.9, timedelta="15min", save_dir=None):
+    """
+    Method to create reference charging time series for the use cases "home", "work",
+    "public" and "hpc".
+
+    :param grid_dir: str
+        Directory where grids are stored. Each grid has to have a subfolder named simbev_folder,
+        where the data from a simbev run is stored.
+    :param grid_ids: list of int or str
+        List of mv grid ids of which the charging events should be taken into consideration.
+    :param simbev_folder: str
+        Name of folder where simbev data is stored.
+    :return: pd.DataFrame
+        Columns are ["home", "work", "public", "hpc"] and index a annual time index with 15 min
+        resolution.
+    """
+    timeindex = pd.date_range("2010-12-25", end='2011-12-31 23:45:00', freq=timedelta)
+    timesteps_per_hour = pd.to_timedelta("1h")/pd.to_timedelta(timedelta)
+    reference_charging_use_cases = pd.DataFrame(columns=["home", "work", "public", "hpc"],
+                                               index=timeindex, data=0).reset_index()
+    for grid_id in grid_ids:
+        dirs = os.listdir(os.path.join(grid_dir, str(grid_id), simbev_folder))
+        for dir_tmp in dirs:
+            dir_tmp_full = os.path.join(grid_dir, str(grid_id), simbev_folder, dir_tmp)
+            if os.path.isdir(dir_tmp_full):
+                evs = os.listdir(dir_tmp_full)
+                for ev in evs:
+                    charging_processes = pd.read_csv(os.path.join(dir_tmp_full, ev),
+                                                     index_col=0)
+                    charging_processes = \
+                        charging_processes.loc[charging_processes.chargingdemand > 0]
+                    for _, charging_process in charging_processes.T.items():
+                        if charging_process.location == "7_charging_hub":
+                            use_case = "hpc"
+                        elif (charging_process.location == "6_home") & \
+                                (charging_process.use_case == "private"):
+                            use_case = "home"
+                        elif (charging_process.location == "0_work") & \
+                                (charging_process.use_case == "private"):
+                            use_case = "work"
+                        else:
+                            use_case = "public"
+                        brutto_charging_capacity = charging_process.netto_charging_capacity / efficiency
+                        # get charging times
+                        charging_timesteps = \
+                            charging_process.chargingdemand / brutto_charging_capacity * timesteps_per_hour
+                        charging_timesteps_full = int(charging_timesteps)
+                        start = charging_process.park_start
+                        if start+charging_timesteps_full < len(timeindex):
+                            # add charging power to respective use case
+                            reference_charging_use_cases.loc[start:start+charging_timesteps_full-1, use_case] += \
+                                brutto_charging_capacity
+                            # handle timestep that is only partly charging
+                            charging_timestep_part = charging_timesteps - charging_timesteps_full
+                            reference_charging_use_cases.loc[start + charging_timesteps_full, use_case] += \
+                                brutto_charging_capacity * charging_timestep_part
+                        else:
+                            reference_charging_use_cases.loc[start:, use_case] += \
+                                brutto_charging_capacity
+    timeindex = pd.date_range("2011-01-01", end='2011-12-31 23:45:00', freq=timedelta)
+    reference_charging_use_cases = reference_charging_use_cases.set_index("index").loc[timeindex]
+    if save_dir is not None:
+        reference_charging_use_cases.divide(1e3).to_csv(save_dir)
+    return reference_charging_use_cases
+
+
 if __name__ == "__main__":
-    extract_relevant_data_from_entso(r"H:\generation_entso",
-                                     r"U:\Software\Flexibility-Quantification\data")
-    scenario_dict = {
-        "hp_weight_air": 0.71,
-        "hp_weight_ground": 0.29,
-        "hp_weight_floor": 0.6,
-        "hp_weight_radiator": 0.4,
-        "ts_timesteps": pd.date_range("1/1/2011 00:00", periods=8760, freq="H")
-    }
-    hp_dir = r"C:\Users\aheider\Documents\Software\Cost-functions\distribution-grid-expansion-cost-functions\data"
-    scaled_heat_demand, scaled_cop = get_heat_pump_timeseries_data(hp_dir, scenario_dict)
+    create_reference_charging_timeseries(r"H:\Grids", [176, 177, 1056, 1690, 1811, 2534],
+                                         save_dir=r"U:\Software\Flexibility-Quantification\data\ref_charging_use_case_bevs.csv")
+    #
+    # copy_simbev_data_bevs(r"H:\Grids", [176, 177, 1056, 1690, 1811, 2534])
+    # extract_relevant_data_from_entso(r"H:\generation_entso",
+    #                                  r"U:\Software\Flexibility-Quantification\data")
+    # scenario_dict = {
+    #     "hp_weight_air": 0.71,
+    #     "hp_weight_ground": 0.29,
+    #     "hp_weight_floor": 0.6,
+    #     "hp_weight_radiator": 0.4,
+    #     "ts_timesteps": pd.date_range("1/1/2011 00:00", periods=8760, freq="H")
+    # }
+    # hp_dir = r"C:\Users\aheider\Documents\Software\Cost-functions\distribution-grid-expansion-cost-functions\data"
+    # scaled_heat_demand, scaled_cop = get_heat_pump_timeseries_data(hp_dir, scenario_dict)
     print("Success")
