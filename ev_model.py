@@ -228,7 +228,7 @@ def import_flexibility_bands_use_case(dir, use_cases):
 
 
 def import_and_merge_flexibility_bands_extended(data_dir, grid_ids=[],
-                                                append="extended"):
+                                                append="extended", only_bevs=True):
     """
     Method to import and merge flexibility bands that allow shifting over standing
     times. The number of EVs is extracted to update nr_ev_ref in scenario_input_ev.
@@ -246,19 +246,41 @@ def import_and_merge_flexibility_bands_extended(data_dir, grid_ids=[],
             flexibility_bands_tmp = \
                 pd.read_csv(data_dir+f'/{grid_id}/{band}_{append}.csv',
                             index_col=0, parse_dates=True, dtype=np.float32)
+
+            # Extract BEVs if only they should be extracted, otherwise use all columns
+            if only_bevs:
+                bevs = []
+                dirs = os.listdir(os.path.join(data_dir, str(grid_id), "simbev_run"))
+                for dir_tmp in dirs:
+                    if os.path.isdir(os.path.join(data_dir, str(grid_id), "simbev_run", dir_tmp)):
+                        evs = os.listdir(os.path.join(data_dir, str(grid_id), "simbev_run", dir_tmp))
+                        for ev in evs:
+                            if "bev" in ev:
+                                bevs.append(True)
+                            else:
+                                bevs.append(False)
+                cols = [str(i) for i in range(len(bevs))
+                        if bevs[i] & (str(i) in flexibility_bands_tmp.columns)]
+            else:
+                cols = flexibility_bands_tmp.columns
             if band_df.index.empty:
                 band_df = \
                     pd.DataFrame(columns=[append], index=flexibility_bands_tmp.index,
                                  data=0)
-            band_df[append] += flexibility_bands_tmp.sum(axis=1)
+            band_df[append] += flexibility_bands_tmp[cols].sum(axis=1)
             if band == "upper_power":
-                nr_ev += len(flexibility_bands_tmp.columns)
+                nr_ev += len(flexibility_bands_tmp[cols].columns)
             print(f"Finished grid {grid_id} {band}")
         # remove numeric problems
         if "upper" in band:
             flexibility_bands[band] = band_df + 1e-6
         elif "lower" in band:
             flexibility_bands[band] = band_df - 1e-6
+        # remove first week
+        timeindex_full = pd.date_range("2010-12-25", end='2011-12-31 23:45:00', freq="15min")
+        timeindex = pd.date_range("2011-01-01", end='2011-12-31 23:45:00', freq="15min")
+        flexibility_bands[band].index = timeindex_full
+        flexibility_bands[band] = flexibility_bands[band].loc[timeindex]
     print(f"Total of {nr_ev} EVs imported.")
     return flexibility_bands
 
@@ -345,8 +367,8 @@ if __name__ == "__main__":
     mode = "extended"
     save_files = True
     if mode == "extended":
-        merge_bands = False
-        extract_shifting_time = True
+        merge_bands = True
+        extract_shifting_time = False
     solver = "gurobi"
     time_increment = pd.to_timedelta('1h')
     if mode == "single":
@@ -439,14 +461,14 @@ if __name__ == "__main__":
                 flex_bands_final[band].to_csv(f"data/{band}_flex+.csv")
     elif mode == "extended":
         grid_dir = r"H:\Grids"
-        grid_ids = [176, 177, 1056, 1690, 1811, 2534]
+        grid_ids = [176, 177, 1056, 1690, 1811, 2534] # 176, 177, 1056, 1690, 1811, 2534
         use_case = "extended"
         if merge_bands:
             bands = import_and_merge_flexibility_bands_extended(grid_dir, grid_ids=grid_ids,
                                                                 append=use_case)
             if save_files:
                 for band in bands.keys():
-                    bands[band].to_csv(f"data/{band}_flex++.csv")
+                    bands[band].to_csv(f"data/{band}_extended_bevs.csv")
         if extract_shifting_time:
             determine_shifting_times(grid_dir, grid_ids=grid_ids, use_cases=[use_case])
     print("SUCCESS")
