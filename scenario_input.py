@@ -252,6 +252,8 @@ def scenario_input_evs(scenario_dict={}, mode="inflexible",
                     flex_bands[band].resample(time_increment).max().loc[timesteps]
         scenario_dict.update({
             "ts_flex_bands": flex_bands})
+    # only set ev_use_binaries to True if V2G is used
+    ev_use_binaries = use_binaries and v2g
     scenario_dict.update({
         "ev_mode": mode,
         "use_cases_flexible": use_cases_flexible,
@@ -261,7 +263,7 @@ def scenario_input_evs(scenario_dict={}, mode="inflexible",
         "ev_v2g": v2g,
         "ev_charging_efficiency": 0.9,
         "ev_discharging_efficiency": 0.9,
-        "ev_use_binaries": use_binaries
+        "ev_use_binaries": ev_use_binaries
     })
     return scenario_dict
 
