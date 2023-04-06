@@ -231,17 +231,17 @@ def scenario_input_evs(scenario_dict={}, mode="inflexible",
     time_increment = scenario_dict.get("time_increment", "1h")
     scenario_dict["time_increment"] = time_increment
     ref_charging = (pd.read_csv(
-        r"data/ref_charging_use_case.csv", index_col=0, parse_dates=True) / 1e3).resample(
+        r"data/ref_charging_use_case_bevs.csv", index_col=0, parse_dates=True) / 1e3).resample(
         scenario_dict["time_increment"]).mean() # GW
-    nr_ev_ref = 26880  # from SEST
+    nr_ev_ref = 16574  # only BEVs from SEST
     if mode == "flexible":
         flex_bands = {}
         for band in ["upper_power", "upper_energy", "lower_energy"]:
             if not extended_flex:
-                flex_bands[band] = pd.read_csv(f"data/{band}_flex+.csv", index_col=0,
+                flex_bands[band] = pd.read_csv(f"data/{band}_bevs.csv", index_col=0,
                                                parse_dates=True) / 1e3
             else:
-                flex_bands[band] = pd.read_csv(f"data/{band}_flex++.csv", index_col=0,
+                flex_bands[band] = pd.read_csv(f"data/{band}_extended_bevs.csv", index_col=0,
                                                parse_dates=True) / 1e3
                 # nr_ev_ref = 26837
             if "power" in band:
