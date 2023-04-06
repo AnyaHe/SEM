@@ -5,6 +5,81 @@ import json
 from data_preparation.data_preparation import get_heat_pump_timeseries_data
 
 
+def scenario_variation_heat_pumps():
+    scenarios = {
+        "HP_reference": {
+            "hp_mode": "inflexible"
+        },
+        "HP_flexible": {
+            "hp_mode": "flexible", "tes_relative_size": 1
+        },
+        "HP_flexible_double_TES": {
+            "hp_mode": "flexible", "tes_relative_size": 2
+        },
+        "HP_flexible_four_TES": {
+            "hp_mode": "flexible", "tes_relative_size": 4
+        },
+    }
+    return scenarios
+
+
+def scenario_variation_electric_vehicles():
+    scenarios = {
+        "EV_reference": {
+            "ev_mode": "inflexible", "flexible_ev_use_cases": [],
+            "ev_extended_flex": False, "ev_v2g": False
+        },
+        "EV_flexible": {
+            "ev_mode": "flexible", "flexible_ev_use_cases": ["home", "work"],
+            "ev_extended_flex": False, "ev_v2g": False
+        },
+        "EV_flexible_with_public": {
+            "ev_mode": "flexible", "flexible_ev_use_cases": ["home", "work", "public"],
+            "ev_extended_flex": False, "ev_v2g": False
+        },
+        "EV_flexible_with_shifting": {
+            "ev_mode": "flexible", "flexible_ev_use_cases": ["home", "work", "public"],
+            "ev_extended_flex": True, "ev_v2g": False
+        },
+        "EV_flexible_with_v2g": {
+            "ev_mode": "flexible", "flexible_ev_use_cases": ["home", "work", "public"],
+            "ev_extended_flex": True, "ev_v2g": True
+        },
+    }
+    return scenarios
+
+
+def scenario_variation_electric_vehicles_and_heat_pumps():
+    scenarios = {
+        "EV_HP_reference": {
+            "ev_mode": "inflexible", "flexible_ev_use_cases": [],
+            "ev_extended_flex": False, "ev_v2g": False,
+            "hp_mode": "inflexible"
+        },
+        "EV_HP_flexible": {
+            "ev_mode": "flexible", "flexible_ev_use_cases": ["home", "work"],
+            "ev_extended_flex": False, "ev_v2g": False,
+            "hp_mode": "flexible", "tes_relative_size": 1
+        },
+        "EV_HP_flex+": {
+            "ev_mode": "flexible", "flexible_ev_use_cases": ["home", "work", "public"],
+            "ev_extended_flex": False, "ev_v2g": False,
+            "hp_mode": "flexible", "tes_relative_size": 2
+        },
+        "EV_HP_flex++": {
+            "ev_mode": "flexible", "flexible_ev_use_cases": ["home", "work", "public"],
+            "ev_extended_flex": True, "ev_v2g": False,
+            "hp_mode": "flexible", "tes_relative_size": 4
+        },
+        "EV_HP_flex+++": {
+            "ev_mode": "flexible", "flexible_ev_use_cases": ["home", "work", "public"],
+            "ev_extended_flex": True, "ev_v2g": True,
+            "hp_mode": "flexible", "tes_relative_size": 4
+        },
+    }
+    return scenarios
+
+
 def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
     """
     Method defining the default scenario input for three different storage equivalents:
@@ -79,7 +154,10 @@ def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
         "time_horizons": [24, 14*24, 24*366],
         "time_increment": '1h',
         "ts_vres": vres.loc[timeindex],
-        "ts_demand": demand.loc[timeindex]
+        "ts_demand": demand.loc[timeindex],
+        "hp_mode": None, "tes_relative_size": 1,
+        "ev_mode": None, "flexible_ev_use_cases": [],
+        "ev_extended_flex": False, "ev_v2g": False
     }
 
 
