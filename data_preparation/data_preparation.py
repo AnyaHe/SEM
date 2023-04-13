@@ -252,8 +252,8 @@ def create_reference_charging_and_flexibility_timeseries(
     timeindex = pd.date_range("2011-01-01", end='2011-12-31 23:45:00', freq=timedelta)
     reference_charging_use_cases = reference_charging_use_cases.set_index("index").loc[timeindex].divide(1e3)
     upper_energy = reference_charging_use_cases.cumsum()/timesteps_per_hour
-    lower_energy = lower_energy.set_index("index").loc[timeindex].divide(1e3)/timesteps_per_hour
-    upper_power = upper_power.divide(1e3)
+    lower_energy = lower_energy.set_index("index").loc[timeindex].divide(1e3).cumsum()/timesteps_per_hour
+    upper_power = upper_power.set_index("index").loc[timeindex].divide(1e3)
     if save_dir is not None:
         reference_charging_use_cases.to_csv(os.path.join(save_dir, "ref_charging_use_case_bevs.csv"))
         upper_energy.to_csv(os.path.join(save_dir, "upper_energy_bevs.csv"))
