@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import os
 import shutil
-
+import pickle
 
 BANDS = ["upper_power", "upper_energy", "lower_energy"]
 
@@ -157,7 +157,7 @@ def copy_simbev_data_bevs(grid_dir, grid_ids):
 
 
 def create_reference_charging_and_flexibility_timeseries(
-        grid_dir, grid_ids, simbev_folder="simbev_bevs", efficiency=0.9,
+        grid_dir, grid_ids, simbev_folder="simbev_run", efficiency=0.9,
         timedelta="15min", save_dir=None):
     """
     Method to create reference charging time series for the use cases "home", "work",
@@ -174,86 +174,100 @@ def create_reference_charging_and_flexibility_timeseries(
         Columns are ["home", "work", "public", "hpc"] and index a annual time index with 15 min
         resolution.
     """
-    timeindex = pd.date_range("2010-12-25", end='2011-12-31 23:45:00', freq=timedelta)
+    use_cases = ["home", "work", "public", "hpc"]
+    timeindex = pd.date_range("2011-01-01", end='2012-01-07 23:45:00', freq=timedelta)
     timesteps_per_hour = pd.to_timedelta("1h")/pd.to_timedelta(timedelta)
     reference_charging_use_cases = pd.DataFrame(columns=["home", "work", "public", "hpc"],
                                                index=timeindex, data=0).reset_index()
-    upper_power = pd.DataFrame(columns=["home", "work", "public", "hpc"],
+    upper_power = pd.DataFrame(columns=use_cases,
                                index=timeindex, data=0).reset_index()
-    lower_energy = pd.DataFrame(columns=["home", "work", "public", "hpc"],
+    lower_energy = pd.DataFrame(columns=use_cases,
                                 index=timeindex, data=0).reset_index()
     for grid_id in grid_ids:
-        dirs = os.listdir(os.path.join(grid_dir, str(grid_id), simbev_folder))
-        for dir_tmp in dirs:
-            dir_tmp_full = os.path.join(grid_dir, str(grid_id), simbev_folder, dir_tmp)
-            if os.path.isdir(dir_tmp_full):
-                evs = os.listdir(dir_tmp_full)
-                for ev in evs:
-                    charging_processes = pd.read_csv(os.path.join(dir_tmp_full, ev),
-                                                     index_col=0)
-                    charging_processes = \
-                        charging_processes.loc[charging_processes.chargingdemand > 0]
-                    # iterate through charging processes
-                    for _, charging_process in charging_processes.T.items():
-                        # extract charging use case
-                        if charging_process.location == "7_charging_hub":
-                            use_case = "hpc"
-                        elif (charging_process.location == "6_home") & \
-                                (charging_process.use_case == "private"):
-                            use_case = "home"
-                        elif (charging_process.location == "0_work") & \
-                                (charging_process.use_case == "private"):
-                            use_case = "work"
-                        else:
-                            use_case = "public"
-                        # determine power at grid connection point
-                        brutto_charging_capacity = charging_process.netto_charging_capacity / efficiency
-                        # get charging times
-                        charging_timesteps = \
-                            charging_process.chargingdemand / brutto_charging_capacity * timesteps_per_hour
-                        charging_timesteps_full = int(charging_timesteps)
-                        start = charging_process.park_start
-                        end = charging_process.park_end
-                        if start+charging_timesteps_full < len(timeindex):
-                            # add charging power to respective use case
-                            reference_charging_use_cases.loc[start:start+charging_timesteps_full-1, use_case] += \
-                                brutto_charging_capacity
-                            # handle timestep that is only partly charging
-                            charging_timestep_part = charging_timesteps - charging_timesteps_full
-                            reference_charging_use_cases.loc[start + charging_timesteps_full, use_case] += \
-                                brutto_charging_capacity * charging_timestep_part
-                            # maximum power for full standing period
-                            if end < len(timeindex):
-                                upper_power.loc[start: end, use_case] += brutto_charging_capacity
-                                # lower band
-                                lower_energy.loc[end - charging_timesteps_full + 1: end, use_case] += \
-                                    brutto_charging_capacity
-                                if charging_timestep_part != 0.0:
-                                    lower_energy.loc[end - charging_timesteps_full, use_case] += (
-                                            charging_timestep_part * brutto_charging_capacity
-                                    )
-                            else:
-                                upper_power.loc[start:, use_case] += brutto_charging_capacity
-                                # lower band
-                                if end - charging_timesteps_full < len(timeindex):
-                                    if charging_timestep_part != 0.0:
-                                        lower_energy.loc[end - charging_timesteps_full, use_case] += (
-                                                charging_timestep_part * brutto_charging_capacity
-                                        )
-                                    if end - charging_timesteps_full + 1 < len(timeindex):
-                                        lower_energy.loc[end - charging_timesteps_full + 1:, use_case] += \
-                                            brutto_charging_capacity
-                        # if end of charging event is later than considered period, full charging until end of period
-                        else:
-                            reference_charging_use_cases.loc[start:, use_case] += \
-                                brutto_charging_capacity
-                            # maximum power for full standing period
-                            upper_power.loc[start:, use_case] += brutto_charging_capacity
-    timeindex = pd.date_range("2011-01-01", end='2011-12-31 23:45:00', freq=timedelta)
-    reference_charging_use_cases = reference_charging_use_cases.set_index("index").loc[timeindex].divide(1e3)
-    upper_energy = reference_charging_use_cases.cumsum()/timesteps_per_hour
-    lower_energy = lower_energy.set_index("index").loc[timeindex].divide(1e3).cumsum()/timesteps_per_hour
-    upper_power = upper_power.set_index("index").loc[timeindex].divide(1e3)
+        csv_path = os.path.join(grid_dir, str(grid_id), simbev_folder)
+        with open(os.sep.join([csv_path, 'simbev_data_corrections.pickle']), 'rb') \
+                as handle:
+            simbev_data = pickle.load(handle)
+            handle.close()
+        # use only bevs
+        charging_processes = simbev_data.loc[simbev_data.bat_cap > 30]
+        charging_processes = \
+            charging_processes.loc[charging_processes.chargingdemand > 0]
+        if "location" in charging_processes.columns:
+            loc = "location"
+        elif "destination" in charging_processes.columns:
+            loc = "destination"
+        else:
+            raise ValueError("Location or destination need to be in data.")
+        # iterate through charging processes
+        for _, charging_process in charging_processes.T.items():
+            # extract charging use case
+            if charging_process[loc] == "7_charging_hub":
+                use_case = "hpc"
+            elif (charging_process[loc] == "6_home") & \
+                    (charging_process.use_case == "private"):
+                use_case = "home"
+            elif (charging_process[loc] == "0_work") & \
+                    (charging_process.use_case == "private"):
+                use_case = "work"
+            else:
+                use_case = "public"
+            # determine power at grid connection point
+            brutto_power = charging_process.netto_charging_capacity / efficiency
+            netto_power = charging_process.netto_charging_capacity
+            # get charging times
+            charging_timesteps = \
+                charging_process.chargingdemand / netto_power * timesteps_per_hour
+            charging_timesteps_full = int(charging_timesteps)
+            charging_timestep_part = charging_timesteps - charging_timesteps_full
+            start = charging_process.park_start
+            end = charging_process.park_end
+            # upper power and energy
+            if start+charging_timesteps_full < len(timeindex):
+                # add charging power to respective use case
+                reference_charging_use_cases.loc[start:start+charging_timesteps_full-1, use_case] += \
+                    brutto_power
+                # handle timestep that is only partly charging
+                reference_charging_use_cases.loc[start + charging_timesteps_full, use_case] += \
+                    brutto_power * charging_timestep_part
+                # maximum power for full standing period
+                if end < len(timeindex):
+                    upper_power.loc[start: end, use_case] += brutto_power
+
+                else:
+                    upper_power.loc[start:, use_case] += brutto_power
+
+            # if end of charging event is later than considered period, full charging until end of period
+            else:
+                reference_charging_use_cases.loc[start:, use_case] += \
+                    brutto_power
+                # maximum power for full standing period
+                upper_power.loc[start:, use_case] += brutto_power
+            # lower energy
+            # if full charging event is in time series, handle as usual
+            if end < len(timeindex):
+                lower_energy.loc[end - charging_timesteps_full + 1: end, use_case] += \
+                    netto_power
+                lower_energy.loc[end - charging_timesteps_full, use_case] += (
+                            charging_timestep_part * netto_power
+                    )
+            else:
+                # if first timestep is still in timeseries
+                if end - charging_timesteps_full < len(timeindex):
+                    lower_energy.loc[end - charging_timesteps_full, use_case] += (
+                                charging_timestep_part * netto_power
+                        )
+                # if at least one time step of full charging occurs
+                if end - charging_timesteps_full + 1 < len(timeindex):
+                    lower_energy.loc[end - charging_timesteps_full + 1:, use_case] += \
+                        netto_power
+    # check integrity
+    if ((reference_charging_use_cases.cumsum() - lower_energy.cumsum())[use_cases]< -1e-6).any().any():
+        raise ValueError
+    reference_charging_use_cases = reference_charging_use_cases.set_index("index").divide(1e3)
+    upper_energy = reference_charging_use_cases.cumsum().multiply(efficiency)/timesteps_per_hour
+    lower_energy = lower_energy.set_index("index").divide(1e3).cumsum()/timesteps_per_hour
+    upper_power = upper_power.set_index("index").divide(1e3)
     if save_dir is not None:
         reference_charging_use_cases.to_csv(os.path.join(save_dir, "ref_charging_use_case_bevs.csv"))
         upper_energy.to_csv(os.path.join(save_dir, "upper_energy_bevs.csv"))

@@ -228,7 +228,7 @@ def import_flexibility_bands_use_case(dir, use_cases):
 
 
 def import_and_merge_flexibility_bands_extended(data_dir, grid_ids=[],
-                                                append="extended", only_bevs=True):
+                                                append="extended"):
     """
     Method to import and merge flexibility bands that allow shifting over standing
     times. The number of EVs is extracted to update nr_ev_ref in scenario_input_ev.
@@ -247,29 +247,13 @@ def import_and_merge_flexibility_bands_extended(data_dir, grid_ids=[],
                 pd.read_csv(data_dir+f'/{grid_id}/{band}_{append}.csv',
                             index_col=0, parse_dates=True, dtype=np.float32)
 
-            # Extract BEVs if only they should be extracted, otherwise use all columns
-            if only_bevs:
-                bevs = []
-                dirs = os.listdir(os.path.join(data_dir, str(grid_id), "simbev_run"))
-                for dir_tmp in dirs:
-                    if os.path.isdir(os.path.join(data_dir, str(grid_id), "simbev_run", dir_tmp)):
-                        evs = os.listdir(os.path.join(data_dir, str(grid_id), "simbev_run", dir_tmp))
-                        for ev in evs:
-                            if "bev" in ev:
-                                bevs.append(True)
-                            else:
-                                bevs.append(False)
-                cols = [str(i) for i in range(len(bevs))
-                        if bevs[i] & (str(i) in flexibility_bands_tmp.columns)]
-            else:
-                cols = flexibility_bands_tmp.columns
             if band_df.index.empty:
                 band_df = \
                     pd.DataFrame(columns=[append], index=flexibility_bands_tmp.index,
                                  data=0)
-            band_df[append] += flexibility_bands_tmp[cols].sum(axis=1)
+            band_df[append] += flexibility_bands_tmp.sum(axis=1)
             if band == "upper_power":
-                nr_ev += len(flexibility_bands_tmp[cols].columns)
+                nr_ev += len(flexibility_bands_tmp.columns)
             print(f"Finished grid {grid_id} {band}")
         # remove numeric problems
         if "upper" in band:
@@ -277,12 +261,33 @@ def import_and_merge_flexibility_bands_extended(data_dir, grid_ids=[],
         elif "lower" in band:
             flexibility_bands[band] = band_df - 1e-6
         # remove first week
-        timeindex_full = pd.date_range("2010-12-25", end='2011-12-31 23:45:00', freq="15min")
+        timeindex_full = pd.date_range("2011-01-01", end='2012-01-07 23:45:00', freq="15min")
         timeindex = pd.date_range("2011-01-01", end='2011-12-31 23:45:00', freq="15min")
         flexibility_bands[band].index = timeindex_full
         flexibility_bands[band] = flexibility_bands[band].loc[timeindex]
     print(f"Total of {nr_ev} EVs imported.")
     return flexibility_bands
+
+
+def get_bool_list_of_bevs_in_evs(data_dir, grid_id):
+    """
+    Method to get list of bools indicating which files are bevs
+
+    :param data_dir:
+    :param grid_id:
+    :return:
+    """
+    bevs = []
+    dirs = os.listdir(os.path.join(data_dir, str(grid_id), "simbev_run"))
+    for dir_tmp in dirs:
+        if os.path.isdir(os.path.join(data_dir, str(grid_id), "simbev_run", dir_tmp)):
+            evs = os.listdir(os.path.join(data_dir, str(grid_id), "simbev_run", dir_tmp))
+            for ev in evs:
+                if "bev" in ev:
+                    bevs.append(True)
+                else:
+                    bevs.append(False)
+    return bevs
 
 
 def determine_shifting_times(data_dir, grid_ids, use_cases):
@@ -308,13 +313,15 @@ def scale_electric_vehicles(nr_ev_mio, scenario_dict):
     flex_bands = {}
     if scenario_dict["ev_mode"] == "flexible":
         for band in ["upper_power", "upper_energy", "lower_energy"]:
+            # for shifting within standing times
             if not scenario_dict["ev_extended_flex"]:
                 flex_bands[band] = scenario_dict["ts_flex_bands"][band].divide(
                     scenario_dict["nr_ev_ref"]).multiply(nr_ev)[
                     scenario_dict["use_cases_flexible"]]
+            # for shifting over standing times
             else:
                 flex_bands[band] = scenario_dict["ts_flex_bands"][band].divide(
-                    scenario_dict["nr_ev_ref"]).multiply(nr_ev)
+                    scenario_dict["nr_ev_extended_flex"]).multiply(nr_ev)
     return ref_charging, flex_bands
 
 
@@ -337,10 +344,10 @@ def model_input_evs(scenario_dict, ev_mode, i=None, nr_ev_mio=None):
                 ~reference_charging.columns.isin(scenario_dict["use_cases_flexible"])]
             energy_ev = \
                 reference_charging[use_cases_inflexible].sum().sum() + \
-                (flexibility_bands["upper_energy"].sum(axis=1)[
-                     -1] +
-                 flexibility_bands["lower_energy"].sum(axis=1)[
-                     -1]) / 0.9 / 2
+                (flexibility_bands["upper_energy"].sum(axis=1)[-1] -
+                 flexibility_bands["upper_energy"].sum(axis=1)[0] +
+                 flexibility_bands["lower_energy"].sum(axis=1)[-1] -
+                 flexibility_bands["lower_energy"].sum(axis=1)[0]) / 0.9 / 2
             ref_charging = reference_charging[use_cases_inflexible].sum(axis=1)
         else:
             energy_ev = reference_charging.sum().sum()
@@ -465,7 +472,7 @@ if __name__ == "__main__":
         use_case = "extended"
         if merge_bands:
             bands = import_and_merge_flexibility_bands_extended(grid_dir, grid_ids=grid_ids,
-                                                                append=use_case)
+                                                                append=use_case+"_bevs")
             if save_files:
                 for band in bands.keys():
                     bands[band].to_csv(f"data/{band}_extended_bevs.csv")

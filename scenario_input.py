@@ -184,7 +184,7 @@ def scenario_input_hps(scenario_dict={}, mode="inflexible", timesteps=None,
         "hp_weight_floor": 0.6,
         "hp_weight_radiator": 0.4,
         "ts_timesteps": timesteps,
-        "hp_dir": r"C:\Users\aheider\Documents\Software\Cost-functions\distribution-grid-expansion-cost-functions\data"
+        "hp_dir": r"U:\Software\Cost-functions\distribution-grid-expansion-cost-functions\data"
     })
     heat_demand, cop = \
         get_heat_pump_timeseries_data(scenario_dict["hp_dir"], scenario_dict)
@@ -234,6 +234,7 @@ def scenario_input_evs(scenario_dict={}, mode="inflexible",
         r"data/ref_charging_use_case_bevs.csv", index_col=0, parse_dates=True) / 1e3).resample(
         scenario_dict["time_increment"]).mean() # GW
     nr_ev_ref = 16574  # only BEVs from SEST
+    nr_ev_extended_flex = 13842
     if mode == "flexible":
         flex_bands = {}
         for band in ["upper_power", "upper_energy", "lower_energy"]:
@@ -260,6 +261,7 @@ def scenario_input_evs(scenario_dict={}, mode="inflexible",
         "ts_ref_charging": ref_charging.loc[timesteps],
         "nr_ev_ref": nr_ev_ref,
         "ev_extended_flex": extended_flex,
+        "nr_ev_extended_flex": nr_ev_extended_flex,
         "ev_v2g": v2g,
         "ev_charging_efficiency": 0.9,
         "ev_discharging_efficiency": 0.9,
