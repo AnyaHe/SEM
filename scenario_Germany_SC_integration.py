@@ -62,6 +62,7 @@ if __name__ == "__main__":
             shifted_energy_df = pd.DataFrame()
             shifted_energy_rel_df = pd.DataFrame()
             storage_durations = pd.DataFrame()
+            energy_consumed = pd.DataFrame()
             for i in range(9):
                 print(f"Info: Starting iteration {i} of scenario integration of sector coupling {scenario}")
                 # add hps if included
@@ -116,6 +117,22 @@ if __name__ == "__main__":
                         columns={"index": "storage_type", 0: "energy_stored"})
                     df_tmp["nr_hp"] = nr_hp_mio
                     df_tmp["nr_ev"] = nr_ev_mio
+                    # extract energy values hps
+                    if scenario_dict["hp_mode"] == "flexible":
+                        sum_energy_heat_tmp = pd.Series(model.charging_hp_el.extract_values()).sum()
+                    else:
+                        sum_energy_heat_tmp = sum_energy_heat
+                    # extract energy values evs
+                    if scenario_dict["ev_mode"] == "flexible":
+                        ev_operation = pd.Series(model.charging_ev.extract_values()).unstack().T
+                        if scenario_dict["ev_v2g"]:
+                            ev_operation -= pd.Series(model.discharging_ev.extract_values()).unstack().T
+                        energy_ev_tmp = ev_operation.sum().sum() + ref_charging.sum()
+                    else:
+                        energy_ev_tmp = energy_ev
+                    # write into data frame to save
+                    df_energy_tmp = pd.DataFrame(columns=[i], index=["energy_ev", "energy_hp", "nr_ev", "nr_hp"],
+                                                 data=[energy_ev_tmp, sum_energy_heat_tmp, nr_ev_mio, nr_hp_mio]).T
 
                     if iter_i == 0:
                         charging.to_csv(f"{res_dir}/charging_{i}.csv")
@@ -154,14 +171,18 @@ if __name__ == "__main__":
                             df_tmp["energy_stored"] / \
                             (scenario_dict["ts_demand"].sum().sum() + sum_energy_heat + energy_ev) * 100
                         shifted_energy_rel_df = pd.concat([shifted_energy_rel_df, df_tmp])
+                        energy_consumed = pd.concat([energy_consumed, df_energy_tmp])
                     else:
-                        np.isclose(df_tmp, shifted_energy_df.loc[(shifted_energy_df["nr_hp"] == nr_hp_mio)&
-                                                                         (shifted_energy_df["nr_ev"] == nr_ev_mio)])
+                        assert np.isclose(df_tmp, shifted_energy_df.loc[
+                            (shifted_energy_df["nr_hp"] == nr_hp_mio) &
+                            (shifted_energy_df["nr_ev"] == nr_ev_mio)],
+                            rtol=1e-04, atol=1e-02).all().all()
             shifted_energy_df.to_csv(f"{res_dir}/storage_equivalents.csv")
             shifted_energy_rel_df.to_csv(
                 f"{res_dir}/storage_equivalents_relative.csv")
             if extract_storage_duration:
                 storage_durations.to_csv(f"{res_dir}/storage_durations.csv")
+            energy_consumed.to_csv(f"{res_dir}/energy_consumed.csv")
             # plot results
             if plot_results:
                 if scenario_dict["hp_mode"] is not None:
