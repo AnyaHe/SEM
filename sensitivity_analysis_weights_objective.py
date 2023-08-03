@@ -1,14 +1,13 @@
 import pandas as pd
 import pyomo.environ as pm
-import matplotlib.pyplot as plt
 import os
 
-from storage_equivalent import add_storage_equivalent_model, minimize_energy, \
+from storage_equivalent.storage_equivalent_model import add_storage_equivalent_model, minimize_energy, \
     set_up_base_model
 from scenario_input import base_scenario, scenario_input_hps, save_scenario_dict, \
     scenario_input_evs, adjust_timeseries_data
-from heat_pump_model import add_heat_pump_model, model_input_hps
-from ev_model import add_evs_model, model_input_evs
+from storage_equivalent.heat_pump_model import add_heat_pump_model, model_input_hps
+from storage_equivalent.ev_model import add_evs_model, model_input_evs
 from scenario_Germany_SC_integration import get_new_residual_load
 from plotting import plot_storage_equivalent_germany_stacked
 

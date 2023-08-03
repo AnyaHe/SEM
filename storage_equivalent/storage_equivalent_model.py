@@ -6,8 +6,8 @@ import time
 
 from quantification.flexibility_quantification import shifting_time
 from scenario_input import get_new_residual_load
-from heat_pump_model import add_heat_pump_model
-from ev_model import add_evs_model
+from storage_equivalent.heat_pump_model import add_heat_pump_model
+from storage_equivalent.ev_model import add_evs_model
 
 
 def set_up_base_model(scenario_dict, new_res_load):

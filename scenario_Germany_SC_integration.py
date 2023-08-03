@@ -2,9 +2,9 @@ import os
 import pandas as pd
 import numpy as np
 
-import storage_equivalent as se
-from heat_pump_model import model_input_hps
-from ev_model import model_input_evs
+from storage_equivalent import storage_equivalent_model as se
+from storage_equivalent.heat_pump_model import model_input_hps
+from storage_equivalent.ev_model import model_input_evs
 from scenario_input import base_scenario, scenario_input_hps, save_scenario_dict, \
     scenario_input_evs, adjust_timeseries_data, scenario_variation_heat_pumps, \
     scenario_variation_electric_vehicles, scenario_variation_electric_vehicles_and_heat_pumps

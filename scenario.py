@@ -4,9 +4,9 @@ import pyomo.environ as pm
 import matplotlib.pyplot as plt
 
 from scaling import scale_residual_load
-from storage_equivalent import add_storage_equivalent_model, minimize_energy
-from ev_model import add_ev_model
-from heat_pump_model import scale_heat_demand_to_grid, add_heat_pump_model
+from storage_equivalent.storage_equivalent_model import add_storage_equivalent_model, minimize_energy
+from storage_equivalent.ev_model import add_ev_model
+from storage_equivalent.heat_pump_model import scale_heat_demand_to_grid, add_heat_pump_model
 
 grid_dir = r"C:\Users\aheider\Documents\Grids\Grids_IYCE"
 grid_ids = [176, 177, 1056, 1690, 1811, 2534]

@@ -7,12 +7,10 @@ import time
 
 from scenario_input import base_scenario, scenario_input_hps, save_scenario_dict, \
     scenario_input_evs, get_new_residual_load, adjust_timeseries_data
-from storage_equivalent import set_up_base_model, add_storage_equivalent_model, \
+from storage_equivalent.storage_equivalent_model import set_up_base_model, add_storage_equivalent_model, \
     minimize_energy, determine_storage_durations
-from heat_pump_model import add_heat_pump_model, model_input_hps
-from ev_model import add_evs_model, model_input_evs
-from plotting import plot_storage_equivalent_germany_stacked
-
+from storage_equivalent.heat_pump_model import add_heat_pump_model, model_input_hps
+from storage_equivalent.ev_model import add_evs_model, model_input_evs
 
 if __name__ == "__main__":
     scenario = "Variation_Load_years"

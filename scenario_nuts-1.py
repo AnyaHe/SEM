@@ -2,8 +2,8 @@ import os
 
 import pandas as pd
 import pyomo.environ as pm
-from storage_equivalent import add_storage_equivalents_model, minimize_energy_multi
-from oedb import import_geolocations_states
+from storage_equivalent.storage_equivalent_model import add_storage_equivalents_model, minimize_energy_multi
+from data_preparation.oedb import import_geolocations_states
 
 
 def get_connection_matrix_of_states():
