@@ -6,23 +6,24 @@ import pyomo.environ as pm
 import time
 
 from scenario_input import base_scenario, scenario_input_hps, save_scenario_dict, \
-    scenario_input_evs, get_new_residual_load, adjust_timeseries_data
-from storage_equivalent.storage_equivalent_model import set_up_base_model, \
-    add_storage_equivalent_model, \
-    minimize_energy, determine_storage_durations
-from storage_equivalent.heat_pump_model import add_heat_pump_model, model_input_hps
-from storage_equivalent.ev_model import add_evs_model, model_input_evs
+    scenario_input_evs, adjust_timeseries_data
+from storage_equivalent.storage_equivalent_model import determine_storage_durations, \
+    get_balanced_storage_equivalent_model
+from storage_equivalent.heat_pump_model import model_input_hps
+from storage_equivalent.ev_model import model_input_evs
 from plotting import plot_storage_equivalent_germany_stacked
 
 
 if __name__ == "__main__":
     scenario = "test_to_delete"
-    extract_storage_duration = True
-    vres_data_source = "rn" # "ego", "rn"
-    year = 1990 # solar_min: 1981, solar_max: 2003, wind_min: 2010, wind_max: 1990
-    plot_results = False
-    nr_iterations = 10
+    extract_storage_duration = False
+    vres_data_source = "ego" # "ego", "rn"
+    year = 2011 # solar_min: 1981, solar_max: 2003, wind_min: 2010, wind_max: 1990
+    plot_results = True
+    nr_iterations = 1
+    max_iteration_balance = 5
     solver = "gurobi"
+    use_binaries = True
     hp_mode = None # None, "flexible", "inflexible"
     ev_mode = None  # None, "flexible", "inflexible"
     tes_relative_size = 1 # in share standard
@@ -36,15 +37,15 @@ if __name__ == "__main__":
     os.makedirs(res_dir, exist_ok=True)
     # load scenario values
     scenario_dict = base_scenario(vres_data_source=vres_data_source, year=year)
-    scenario_dict["hp_mode"] = hp_mode
-    scenario_dict["ev_mode"] = ev_mode
     scenario_dict["solver"] = solver
     if hp_mode is not None:
-        scenario_dict = scenario_input_hps(scenario_dict=scenario_dict, mode=hp_mode)
+        scenario_dict = scenario_input_hps(scenario_dict=scenario_dict, mode=hp_mode,
+                                           use_binaries=use_binaries)
     if ev_mode is not None:
         scenario_dict = scenario_input_evs(scenario_dict=scenario_dict, mode=ev_mode,
                                            use_cases_flexible=flexible_ev_use_cases,
-                                           extended_flex=ev_extended_flex)
+                                           extended_flex=ev_extended_flex,
+                                           use_binaries=use_binaries)
     scenario_dict["share_pv"] = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
     # shift timeseries
     scenario_dict = adjust_timeseries_data(scenario_dict)
@@ -53,35 +54,32 @@ if __name__ == "__main__":
         model_input_hps(
             scenario_dict=scenario_dict,
             hp_mode=hp_mode,
-            nr_hp_mio=20
+            nr_hp_mio=19.4
         )
     nr_ev_mio, flexibility_bands, energy_ev, ref_charging = model_input_evs(
         scenario_dict=scenario_dict,
         ev_mode=ev_mode,
-        nr_ev_mio=40
+        nr_ev_mio=48.8
     )
     shifted_energy_df = pd.DataFrame()
     shifted_energy_rel_df = pd.DataFrame()
     storage_durations = pd.DataFrame()
     for share_pv in scenario_dict["share_pv"]:
-        new_res_load = get_new_residual_load(scenario_dict,
-                                             share_pv=share_pv,
-                                             sum_energy_heat=sum_energy_heat,
-                                             energy_ev=energy_ev,
-                                             ref_charging=ref_charging,
-                                             ts_heat_el=ts_heat_el)
-        model = set_up_base_model(scenario_dict=scenario_dict,
-                                  new_res_load=new_res_load)
-        if hp_mode == "flexible":
-            model = add_heat_pump_model(model, p_nom_hp, capacity_tes,
-                                        scenario_dict["ts_cop"], ts_heat_demand)
-        if ev_mode == "flexible":
-            add_evs_model(model, flexibility_bands, v2g=scenario_dict["ev_v2g"])
-        model = add_storage_equivalent_model(model, new_res_load,
-                                             time_horizons=scenario_dict["time_horizons"])
-        model.objective = pm.Objective(rule=minimize_energy,
-                                       sense=pm.minimize,
-                                       doc='Define objective function')
+        model, new_res_load = get_balanced_storage_equivalent_model(
+            scenario_dict=scenario_dict,
+            max_iter=max_iteration_balance,
+            ref_charging=ref_charging,
+            flexibility_bands=flexibility_bands,
+            energy_ev=energy_ev,
+            ts_heat_el=ts_heat_el,
+            sum_energy_heat=sum_energy_heat,
+            ts_heat_demand=ts_heat_demand,
+            p_nom_hp=p_nom_hp,
+            capacity_tes=capacity_tes,
+            use_binaries=use_binaries,
+            share_pv=share_pv
+        )
+
         for iter in range(nr_iterations):
             model_tmp = model.clone()
             np.random.seed(int(time.time()))
@@ -131,10 +129,10 @@ if __name__ == "__main__":
         f"{res_dir}/storage_equivalents_relative.csv")
     if extract_storage_duration:
         storage_durations.to_csv(f"{res_dir}/storage_durations.csv")
+    # remove timeseries as they cannot be saved in json format
+    save_scenario_dict(scenario_dict, res_dir)
     # plot results
     if plot_results:
         plot_storage_equivalent_germany_stacked(shifted_energy_df,
                                                 parameter={"share_pv": "Share PV [-]"})
-    # remove timeseries as they cannot be saved in json format
-    save_scenario_dict(scenario_dict, res_dir)
     print("SUCCESS")
