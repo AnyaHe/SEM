@@ -151,7 +151,7 @@ def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
     return {
         "objective": "minimize_discharging",
         "weighting": [1.001, 1.001**2, 1.001**3],
-        "time_horizons": [24, 14*24, 24*366],
+        "time_horizons": [24, 14*24, 24*364],
         "time_increment": '1h',
         "ts_vres": vres.loc[timeindex],
         "ts_demand": demand.loc[timeindex],
@@ -342,7 +342,7 @@ def adjust_timeseries_data(scenario_dict):
 
 
 def get_new_residual_load(scenario_dict, share_pv=None, sum_energy_heat=0, energy_ev=0,
-                          ref_charging=None, ts_heat_el=None) :
+                          ref_charging=None, ts_heat_el=None, share_gen_to_load=1) :
     """
     Method to calculate new residual load for input into storage equivalent model.
 
@@ -351,7 +351,6 @@ def get_new_residual_load(scenario_dict, share_pv=None, sum_energy_heat=0, energ
     :param energy_ev:
     :return:
     """
-
     sum_energy = scenario_dict["ts_demand"].sum().sum()
     if ref_charging is None:
         ref_charging = pd.Series(index=scenario_dict["ts_demand"].index, data=0)
@@ -365,7 +364,8 @@ def get_new_residual_load(scenario_dict, share_pv=None, sum_energy_heat=0, energ
             scenario_dict["ts_vres"].divide(scenario_dict["ts_vres"].sum())
         scaled_ts_reference["solar"] = scaled_ts_reference["solar"] * share_pv
         scaled_ts_reference["wind"] = scaled_ts_reference["wind"] * (1 - share_pv)
-    vres = scaled_ts_reference * (sum_energy + sum_energy_heat + energy_ev)
+    vres = scaled_ts_reference * (sum_energy + sum_energy_heat + energy_ev) * \
+        share_gen_to_load
     new_res_load = \
         scenario_dict["ts_demand"].sum(axis=1) + ref_charging - vres.sum(axis=1)
     if scenario_dict["hp_mode"] != "flexible":

@@ -67,7 +67,8 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
             ev = 0
         return sum(model.charging[time_horizon, time] for time_horizon in
                    model.time_horizons_set) + \
-               model.residual_load.iloc[time] + hp_el + ev == 0
+               model.residual_load.iloc[time] + hp_el + ev - model.shedding[time] + \
+               model.spilling[time] == 0
 
     def maximum_charging(model, time_horizon, time):
         return model.charging_max[time_horizon] >= model.charging[time_horizon, time]
@@ -123,8 +124,8 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
     # model.charging_max = pm.Var(model.time_horizons_set)
     # model.abs_charging = pm.Var(model.time_horizons_set, model.time_set)
     model.discharging = pm.Var(model.time_horizons_set, model.time_set)
-    model.slack_res_load_pos = pm.Var(model.time_set, bounds=(0, None))
-    model.slack_res_load_neg = pm.Var(model.time_set, bounds=(0, None))
+    model.shedding = pm.Var(model.time_set, bounds=(0, None))
+    model.spilling = pm.Var(model.time_set, bounds=(0, None))
     # add constraints
     for time_horizon in model.time_horizons_set:
         times = []
@@ -179,11 +180,11 @@ def add_storage_equivalents_model(model, residual_load, connections, flows, **kw
         neg_flows = cell_connections.loc[cell_connections == -1].index
         return sum(model.charging[cell, time_horizon, time] for time_horizon in
                    model.time_horizons_set) + \
-            sum(model.flows[(cell, neighbor), time] for neighbor in pos_flows) - \
-            sum(model.flows[(neighbor, cell), time] for neighbor in neg_flows) + \
-            model.slack_res_load_pos[time] - \
-            model.slack_res_load_neg[time] == \
-            model.residual_load[cell].iloc[time]
+               sum(model.flows[(cell, neighbor), time] for neighbor in pos_flows) - \
+               sum(model.flows[(neighbor, cell), time] for neighbor in neg_flows) - \
+               model.shedding[time] + \
+               model.spilling[time] + \
+               model.residual_load[cell].iloc[time] == 0
 
     def maximum_charging(model, cell, time_horizon, time):
         return model.charging_max[cell, time_horizon] >= \
@@ -242,8 +243,8 @@ def add_storage_equivalents_model(model, residual_load, connections, flows, **kw
     model.charging_max = pm.Var(model.cells_set, model.time_horizons_set)
     model.abs_charging = pm.Var(model.cells_set, model.time_horizons_set, model.time_set)
     model.flows = pm.Var(model.flows_set, model.time_set)
-    model.slack_res_load_pos = pm.Var(model.time_set, bounds=(0, None))
-    model.slack_res_load_neg = pm.Var(model.time_set, bounds=(0, None))
+    model.shedding = pm.Var(model.time_set, bounds=(0, None))
+    model.spilling = pm.Var(model.time_set, bounds=(0, None))
     # add constraints
     for time_horizon in model.time_horizons_set:
         times = []
@@ -286,7 +287,7 @@ def get_slacks(model):
                         for time in model.time_set)
     else:
         slack_tes = 0
-    return sum(model.slack_res_load_neg[time] + model.slack_res_load_neg[time]
+    return sum(model.spilling[time] + model.shedding[time]
                for time in model.time_set) + slack_ev + slack_tes
 
 
@@ -308,7 +309,7 @@ def minimize_energy(model):
 
 def minimize_discharging(model):
     # todo: determine good weighting factor
-    slacks = get_slacks(model) * 1e6
+    slacks = get_slacks(model) * 1e6 * len(model.time_set)
     return sum(model.weighting[time_horizon] * sum(model.discharging[time_horizon, time]
                                                    for time in model.time_set)
                for time_horizon in model.time_horizons_set) + slacks
@@ -381,7 +382,8 @@ def determine_storage_durations(charging, index="duration"):
     return storage_durations
 
 
-def solve_model(model, solver, hp_mode=None, ev_mode=None, ev_v2g=False):
+def solve_model(model, solver, hp_mode=None, ev_mode=None, ev_v2g=False,
+                allow_spill_and_shed=False):
     np.random.seed(int(time.time()))
     opt = pm.SolverFactory(solver)
     if solver == "gurobi":
@@ -401,7 +403,8 @@ def solve_model(model, solver, hp_mode=None, ev_mode=None, ev_v2g=False):
         else:
             prefactor = 1
         if charging_ev.multiply(discharging_ev).multiply(prefactor).sum().sum() > 1e-3:
-            raise ValueError("Simultaneous charging and discharging of EVs. Please check.")
+            raise ValueError("Simultaneous charging and discharging of EVs. "
+                             "Please check.")
     # check that no simultaneous charging and discharging of TES occurs
     if hp_mode == "flexible":
         charging_tes = pd.Series(model.charging_tes.extract_values())
@@ -410,13 +413,19 @@ def solve_model(model, solver, hp_mode=None, ev_mode=None, ev_v2g=False):
             charging_tes *= pd.Series(model.y_charge_tes.extract_values())
             discharging_tes *= pd.Series(model.y_discharge_tes.extract_values())
         if charging_tes.multiply(discharging_tes).sum() > 1e-3:
-            raise ValueError("Simultaneous charging and discharging of TES. Please check.")
+            raise ValueError("Simultaneous charging and discharging of TES. "
+                             "Please check.")
     # extract results
-    slacks = pd.Series(model.slack_res_load_neg.extract_values()) + \
-             pd.Series(model.slack_res_load_pos.extract_values())
+    slacks = pd.Series(model.spilling.extract_values()) + \
+             pd.Series(model.shedding.extract_values())
     if slacks.sum() > 1e-9:
-        raise ValueError("Slacks are being used. Please check. Consider increasing "
-                         "weights.")
+        if allow_spill_and_shed:
+            print(f"Info: {pd.Series(model.spilling.extract_values())} of spilling and "
+                  f"{pd.Series(model.shedding.extract_values())} of shedding are being "
+                  f"used.")
+        else:
+            raise ValueError("Slacks are being used. Please check. Consider increasing "
+                             "weights.")
     return model
 
 
@@ -448,11 +457,14 @@ def get_balanced_storage_equivalent_model(scenario_dict, max_iter=3, tol=1e-2,
             sum_energy_heat=sum_energy_heat,
             energy_ev=energy_ev,
             ref_charging=ref_charging,
-            ts_heat_el=kwargs.get("ts_heat_el", None) )
+            ts_heat_el=kwargs.get("ts_heat_el", None),
+            share_pv=kwargs.get("share_pv", None),
+            share_gen_to_load=kwargs.get("share_gen_to_load", 1.0)
+        )
 
         # initialise base model
         model = set_up_base_model(scenario_dict=scenario_dict,
-                                     new_res_load=new_res_load)
+                                  new_res_load=new_res_load)
         # add heat pump model if flexible
         if scenario_dict["hp_mode"] == "flexible":
             model = add_heat_pump_model(
@@ -484,11 +496,14 @@ def get_balanced_storage_equivalent_model(scenario_dict, max_iter=3, tol=1e-2,
         model.objective = pm.Objective(rule=globals()[scenario_dict["objective"]],
                                        sense=pm.minimize,
                                        doc='Define objective function')
-        model = solve_model(model=model,
-                            solver=scenario_dict["solver"],
-                            hp_mode=scenario_dict["hp_mode"],
-                            ev_mode=scenario_dict["ev_mode"],
-                            ev_v2g=scenario_dict.get("ev_v2g",False))
+        model = solve_model(
+            model=model,
+            solver=scenario_dict["solver"],
+            hp_mode=scenario_dict["hp_mode"],
+            ev_mode=scenario_dict["ev_mode"],
+            ev_v2g=scenario_dict.get("ev_v2g", False),
+            allow_spill_and_shed=kwargs.get("allow_spill_and_shed", False)
+        )
         # check that energy is balanced
         energy_hp_balanced = True
         if scenario_dict["hp_mode"] == "flexible":
