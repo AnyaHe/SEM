@@ -17,17 +17,12 @@ def import_and_save_generation_data():
     # Adapt dispatchable generation
     generation_ts = {}
     for gen_type in generators.type.unique():
-        if gen_type not in ["wind", "solar"]:
-            disp_generation_scaled = pd.read_csv("data/scaled_ts_{}.csv".format(gen_type), index_col=0,
-                                                 parse_dates=True)
-            disp_generators_installed_capacity = generators.loc[generators.type == gen_type].p_nom.sum()
-            disp_generation = disp_generation_scaled * disp_generators_installed_capacity
-            generation_ts[gen_type] = disp_generation.asfreq("15min").interpolate()[gen_type]
-        else:
-            generation_ts[gen_type] = generation[generators.loc[generators.type == gen_type].index].sum(axis=1)
+        if gen_type in ["wind", "solar"]:
+            generation_ts[gen_type] = generation[
+                generators.loc[generators.type == gen_type].index].sum(axis=1)
     os.makedirs("data/{}/generation".format(grid_id), exist_ok=True)
     for gen_type, timeseries in generation_ts.items():
-        timeseries.to_csv("data/{}/generation/ts_{}".format(grid_id, gen_type))
+        timeseries.to_csv("data/{}/generation/ts_{}.csv".format(grid_id, gen_type))
     return generation_ts
 
 
@@ -41,7 +36,7 @@ def import_and_save_load_data():
     os.makedirs("data/{}/load".format(grid_id), exist_ok=True)
     for load_type in loads.sector.unique():
         load_ts[load_type] = load[loads.loc[loads.sector == load_type].index].sum(axis=1)
-        load_ts[load_type].to_csv("data/{}/load/ts_{}".format(grid_id, load_type))
+        load_ts[load_type].to_csv("data/{}/load/ts_{}.csv".format(grid_id, load_type))
     return load_ts
 
 
