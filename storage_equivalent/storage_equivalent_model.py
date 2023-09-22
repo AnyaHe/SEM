@@ -27,6 +27,76 @@ def set_up_base_model(scenario_dict, new_res_load):
     return model
 
 
+def get_power_flexible_technologies(model, time, cells=None):
+    """
+    Method to get charging powers of flexible sector coupling technologies at specific
+    time step t
+
+    Parameters
+    ----------
+    model
+    time
+    cells
+
+    Returns
+    -------
+
+    """
+    if hasattr(model, "charging_hp_el"):
+        if cells is not None:
+            hp_el = \
+                sum(model.charging_hp_el[cell, time] for cell in cells)
+        else:
+            hp_el = model.charging_hp_el[time]
+    else:
+        hp_el = 0
+    if hasattr(model, "charging_ev"):
+        if hasattr(model, "discharging_ev"):
+            if model.use_binaries_ev:
+                if cells is not None:
+                    discharging_ev = sum(model.y_discharge_ev[cp, cell, time] *
+                                         model.discharging_ev[cp, cell, time]
+                                         for cp in model.charging_points_set
+                                         for cell in cells)
+                else:
+                    discharging_ev = sum(model.y_discharge_ev[cp, time] *
+                                         model.discharging_ev[cp, time]
+                                         for cp in model.charging_points_set)
+            else:
+                if cells is not None:
+                    discharging_ev = sum(model.discharging_ev[cp, cell, time]
+                                         for cp in model.charging_points_set
+                                         for cell in cells)
+                else:
+                    discharging_ev = sum(model.discharging_ev[cp, time]
+                                         for cp in model.charging_points_set)
+        else:
+            discharging_ev = 0
+        if model.use_binaries_ev:
+            if cells is not None:
+                charging_ev = sum(
+                    [model.y_charge_ev[cp, cell, time] *
+                     model.charging_ev[cp, cell, time]
+                     for cp in model.charging_points_set
+                     for cell in cells])
+            else:
+                charging_ev = sum([model.y_charge_ev[cp, time] *
+                                   model.charging_ev[cp, time]
+                                   for cp in model.charging_points_set])
+        else:
+            if cells is not None:
+                charging_ev = sum([model.charging_ev[cp, cell, time]
+                                   for cp in model.charging_points_set
+                                   for cell in cells])
+            else:
+                charging_ev = sum([model.charging_ev[cp, time]
+                                   for cp in model.charging_points_set])
+        ev = charging_ev - discharging_ev
+    else:
+        ev = 0
+    return ev, hp_el
+
+
 def add_storage_equivalent_model(model, residual_load, **kwargs):
     def fix_energy_levels(model, time_horizon, time):
         return model.energy_levels[time_horizon, time] == 0
@@ -41,58 +111,11 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
                (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
 
     def meet_residual_load(model, time):
-        if hasattr(model, "charging_hp_el"):
-            if hasattr(model, "cells_set"):
-                hp_el = \
-                    sum(model.charging_hp_el[cell, time] for cell in model.cells_set)
-            else:
-                hp_el = model.charging_hp_el[time]
+        if hasattr(model, "cells_set"):
+            cells = model.cells_set
         else:
-            hp_el = 0
-        if hasattr(model, "charging_ev"):
-            if hasattr(model, "discharging_ev"):
-                if model.use_binaries_ev:
-                    if hasattr(model, "cells_set"):
-                        discharging_ev = sum(model.y_discharge_ev[cp, cell, time] *
-                                             model.discharging_ev[cp, cell, time]
-                                             for cp in model.charging_points_set
-                                             for cell in model.cells_set)
-                    else:
-                        discharging_ev = sum(model.y_discharge_ev[cp, time] *
-                                          model.discharging_ev[cp, time]
-                                          for cp in model.charging_points_set)
-                else:
-                    if hasattr(model, "cells_set"):
-                        discharging_ev = sum(model.discharging_ev[cp, cell, time]
-                                             for cp in model.charging_points_set
-                                             for cell in model.cells_set)
-                    else:
-                        discharging_ev = sum(model.discharging_ev[cp, time]
-                                             for cp in model.charging_points_set)
-            else:
-                discharging_ev = 0
-            if model.use_binaries_ev:
-                if hasattr(model, "cells_set"):
-                    charging_ev = sum(
-                        [model.y_charge_ev[cp, cell, time] *
-                         model.charging_ev[cp, cell, time]
-                         for cp in model.charging_points_set
-                         for cell in model.cells_set])
-                else:
-                    charging_ev = sum([model.y_charge_ev[cp, time] *
-                                       model.charging_ev[cp, time]
-                                       for cp in model.charging_points_set])
-            else:
-                if hasattr(model, "cells_set"):
-                    charging_ev = sum([model.charging_ev[cp, cell, time]
-                                       for cp in model.charging_points_set
-                                       for cell in model.cells_set])
-                else:
-                    charging_ev = sum([model.charging_ev[cp, time]
-                                    for cp in model.charging_points_set])
-            ev = charging_ev - discharging_ev
-        else:
-            ev = 0
+            cells = None
+        ev, hp_el = get_power_flexible_technologies(model, time, cells)
         return sum(model.charging[time_horizon, time] for time_horizon in
                    model.time_horizons_set) + \
                model.residual_load.iloc[time] + hp_el + ev - model.shedding[time] + \

@@ -1,11 +1,14 @@
+import pandas as pd
 import pyomo.environ as pm
 
 
 from storage_equivalent.ev_model import add_evs_model_cells
 from storage_equivalent.heat_pump_model import add_heat_pump_model_cells
+from storage_equivalent.storage_equivalent_model import get_power_flexible_technologies
 
 
-def add_dg_model(model, dg_names, flexible_evs=True, flexible_hps=True, **kwargs):
+def add_dg_model(model, dg_names, grid_powers,
+                 flexible_evs=True, flexible_hps=True, **kwargs):
     """
     Adds distribution grids to existing model. It can be defined whether electric
     vehicles and heat pumps should be included.
@@ -14,6 +17,8 @@ def add_dg_model(model, dg_names, flexible_evs=True, flexible_hps=True, **kwargs
     ----------
     model: pyomo optimisation model
     dg_names: list of str
+    grid_powers: dict of Series or DataFrame, keys: "upper_power", "lower_power"
+        When series scalar value for power, else time-dependent value
     flexible_evs: bool
         Determines whether flexible EVs should be included in the DGs. Default: True
     flexible_hps: bool
@@ -25,6 +30,53 @@ def add_dg_model(model, dg_names, flexible_evs=True, flexible_hps=True, **kwargs
     -------
 
     """
+    def grid_upper(model, cell, time):
+        """
+        Constraint for maximum cumulated power of flexible units within a distribution
+        grid
+
+        Parameters
+        ----------
+        model
+        cell
+        time
+
+        Returns
+        -------
+
+        """
+        ev, hp_el = get_power_flexible_technologies(model, time, [cell])
+        if isinstance(model.grid_powers["upper_power"], pd.Series):
+            upper_power_grid_flex = model.grid_powers["upper_power"][cell]
+        elif isinstance(model.grid_powers["upper_power"], pd.DataFrame):
+            upper_power_grid_flex = model.grid_powers["upper_power"].iloc[time][cell]
+        else:
+            raise ValueError("Unexpected type of upper power grid.")
+        return ev + hp_el <= upper_power_grid_flex
+
+    def grid_lower(model, cell, time):
+        """
+        Constraint for minimum cumulated power of flexible units within a distribution
+        grid
+
+        Parameters
+        ----------
+        model
+        cell
+        time
+
+        Returns
+        -------
+
+        """
+        ev, hp_el = get_power_flexible_technologies(model, time, [cell])
+        if isinstance(model.grid_powers["lower_power"], pd.Series):
+            lower_power_grid_flex = model.grid_powers["lower_power"][cell]
+        elif isinstance(model.grid_powers["lower_power"], pd.DataFrame):
+            lower_power_grid_flex = model.grid_powers["lower_power"].iloc[time][cell]
+        else:
+            raise ValueError("Unexpected type of upper power grid.")
+        return ev + hp_el >= lower_power_grid_flex
     # add new set with dgs
     model.cells_set = pm.Set(initialize=dg_names)
     # add ev model if flexible
@@ -51,6 +103,12 @@ def add_dg_model(model, dg_names, flexible_evs=True, flexible_hps=True, **kwargs
             use_binaries=kwargs.get("use_binaries")
         )
     # add grid constraints
-
+    model.grid_powers = grid_powers
+    # add constraints
+    if flexible_hps or flexible_evs:
+        model.UpperPowerFlex = \
+            pm.Constraint(model.cells_set, model.time_set, rule=grid_upper)
+        model.LowerPowerFlex = \
+            pm.Constraint(model.cells_set, model.time_set, rule=grid_lower)
     return model
 
