@@ -350,6 +350,7 @@ def oedb_import_demand():
                 orm_load_la.sector_consumption_retail,
                 orm_load_la.sector_consumption_industrial,
                 orm_load_la.sector_consumption_agricultural,
+                orm_load_la.subst_id,
                 func.ST_AsText(
                     func.ST_Transform(
                         orm_load_la.geom, srid
@@ -495,12 +496,30 @@ def download_state_wise_demand():
     states_geom, states_data = import_geolocations_states()
     load_la_geom = assign_geom_to_states(states_geom, load_la_geom)
     load_la["state"] = load_la_geom.state
-    load_states = load_la.drop(columns="geometry").groupby("state").sum()
+    load_states = load_la.drop(
+        columns=["geometry", "subst_id"]).groupby("state").sum()
     config = Config()
     timeindex = pd.date_range("2011-1-1", periods=3760, freq="1h")
     timeseries = load_time_series_demandlib(config, timeindex)
     ts_states = pd.DataFrame()
     for state, load_state in load_states.rename(
+            columns={"sector_consumption_agricultural": "agricultural",
+                     "sector_consumption_retail": "retail",
+                     "sector_consumption_residential": "residential",
+                     "sector_consumption_industrial": "industrial",
+                     }).iterrows():
+        ts_states[state] = timeseries.multiply(load_state).sum(axis=1)
+    return ts_states
+
+
+def download_dg_wise_demand():
+    load_fs, load_la = oedb_import_demand()
+    load_dgs = load_la.drop(columns="geometry").groupby("subst_id").sum()
+    config = Config()
+    timeindex = pd.date_range("2011-1-1", periods=3760, freq="1h")
+    timeseries = load_time_series_demandlib(config, timeindex)
+    ts_states = pd.DataFrame()
+    for state, load_state in load_dgs.rename(
             columns={"sector_consumption_agricultural": "agricultural",
                      "sector_consumption_retail": "retail",
                      "sector_consumption_residential": "residential",
@@ -588,6 +607,10 @@ if __name__ == "__main__":
     # ts_states.to_csv("demand_states_ego100.csv")
     # ts_states = download_state_wise_fluctuating_generation()
     # ts_states.to_csv("data/vres_reference_states_ego100.csv")
-    ts_dgs = download_dg_wise_fluctuating_generation()
-    ts_dgs.to_csv("data/vres_reference_dgs_ego100.csv")
+    # ts_dgs = download_dg_wise_fluctuating_generation()
+    # ts_dgs.to_csv("data/vres_reference_dgs_ego100.csv")
+    file_dir = os.getcwd()
+    parent_dir = os.path.dirname(file_dir)
+    ts_dgs = download_dg_wise_demand()
+    ts_dgs.to_csv(os.path.join(parent_dir, "data/demand_dgs_ego100.csv"))
     print("SUCCESS")
