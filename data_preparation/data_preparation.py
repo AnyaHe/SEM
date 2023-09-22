@@ -94,8 +94,46 @@ def determine_shifting_times_ev(flex_bands):
     shifting_time = pd.DataFrame(columns=flex_bands["upper_energy"].columns,
                                  index=flex_bands["upper_energy"].index)
     for idx_max, energy in flex_bands["upper_energy"].iterrows():
-        idx_min = flex_bands["lower_energy"][flex_bands["lower_energy"] <= energy][::-1].idxmax()
+        idx_min = \
+            flex_bands["lower_energy"][flex_bands["lower_energy"] >= energy].idxmin()
         shifting_time.loc[idx_max] = idx_min - idx_max
+    shifting_time[flex_bands["upper_energy"] == flex_bands["lower_energy"]] = \
+        pd.to_timedelta("0h")
+    return shifting_time
+
+
+def determine_t_force_ev(flex_bands):
+    """
+    Method to determine the time of forced operation between upper and lower energy
+    bands.
+    :param flex_bands:
+    :return:
+    """
+    shifting_time = pd.DataFrame(columns=flex_bands["upper_energy"].columns,
+                                 index=flex_bands["upper_energy"].index)
+    freq = (flex_bands["lower_energy"].index[1] - flex_bands["lower_energy"].index[0])
+    timedelta = freq / pd.to_timedelta("1h")
+
+    for idx_min, energy in flex_bands["lower_energy"].iterrows():
+        forced_operation = flex_bands["upper_power"].loc[
+                           idx_min + freq:].cumsum() * timedelta
+        tmp = flex_bands["lower_energy"].loc[idx_min + freq:]
+        tmp += forced_operation
+        if len(tmp) > 0:
+            idx_max = tmp[tmp >= flex_bands["upper_energy"].loc[tmp.index]].idxmin()
+        else:
+            idx_max = flex_bands["lower_energy"].idxmax()
+        # handle last time steps, when upper energy is still higher than lower energy
+        idx_max[idx_max.isnull()] = idx_min
+        idx_max = pd.to_datetime(idx_max)
+        # handle part time intervals
+        for cp in idx_max.index:
+            if flex_bands["upper_power"].loc[idx_max[cp], cp] > 0:
+                idx_max[cp] += (flex_bands["upper_energy"].loc[idx_max[cp], cp] -
+                                flex_bands["lower_energy"].loc[idx_max[cp], cp]) / \
+                               flex_bands["upper_power"].loc[
+                                   idx_max[cp], cp] * pd.to_timedelta("1h")
+        shifting_time.loc[idx_min] = idx_max - idx_min
     return shifting_time
 
 
