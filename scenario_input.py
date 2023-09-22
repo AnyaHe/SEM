@@ -80,6 +80,27 @@ def scenario_variation_electric_vehicles_and_heat_pumps():
     return scenarios
 
 
+def scenario_variation_distribution_grids():
+    scenarios = {
+        "DG_reference": {
+            "ev_mode": "inflexible", "flexible_ev_use_cases": [],
+            "ev_extended_flex": False, "ev_v2g": False,
+            "hp_mode": "inflexible"
+        },
+        "DG_flexible_base": {
+            "ev_mode": "flexible", "flexible_ev_use_cases": ["home", "work"],
+            "ev_extended_flex": False, "ev_v2g": False,
+            "hp_mode": "flexible", "tes_relative_size": 1
+        },
+        "DG_flexible_max": {
+            "ev_mode": "flexible", "flexible_ev_use_cases": ["home", "work", "public"],
+            "ev_extended_flex": True, "ev_v2g": True,
+            "hp_mode": "flexible", "tes_relative_size": 4
+        },
+    }
+    return scenarios
+
+
 def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
     """
     Method defining the default scenario input for three different storage equivalents:
