@@ -136,6 +136,95 @@ def add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, heat_demand,
     return model
 
 
+def add_heat_pump_model_cells(
+        model, p_nom_hp, capacity_tes, cop, heat_demand, efficiency_static_tes=0.99,
+        efficiency_dynamic_tes=0.95, use_binaries=False):
+
+    def energy_conversion_hp(model, cell, time):
+        return model.charging_hp_el[cell, time] * cop.loc[model.timeindex[time]] == \
+            model.charging_hp_th[cell, time]
+
+    def energy_balance_hp_tes(model, cell, time):
+        if model.use_binaries_hp:
+            charging = model.y_charge_tes[cell, time] * model.charging_tes[cell, time]
+            discharging = model.y_discharge_tes[cell, time] * \
+                          model.discharging_tes[cell, time]
+        else:
+            charging = model.charging_tes[cell, time]
+            discharging = model.discharging_tes[cell, time]
+        return model.charging_hp_th[cell, time] == \
+               model.heat_demand.loc[model.timeindex[time], cell] + \
+               charging - discharging
+
+    def fixed_energy_level_tes(model, cell, time):
+        return model.energy_tes[cell, time] == model.capacity_tes[cell]/2
+
+    def charging_tes(model, cell, time):
+        if time == 0:
+            energy_pre = model.capacity_tes[cell]/2
+        else:
+            energy_pre = model.energy_tes[cell, time-1]
+        if model.use_binaries_hp:
+            charging = model.y_charge_tes[cell, time] * model.charging_tes[cell, time]
+            discharging = model.y_discharge_tes[cell, time] * \
+                          model.discharging_tes[cell, time]
+        else:
+            charging = model.charging_tes[cell, time]
+            discharging = model.discharging_tes[cell, time]
+        return model.energy_tes[cell, time] == \
+            model.efficiency_static_tes * energy_pre + \
+            model.efficiency_dynamic_tes * charging * \
+            (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h')) - \
+            discharging * \
+            (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
+
+    def charge_discharge_tes_binaries(model, cell, time):
+        return model.y_charge_tes[cell, time] + model.y_discharge_tes[cell, time] <= 1
+    # save fix parameters
+    model.capacity_tes = capacity_tes
+    model.efficiency_static_tes = efficiency_static_tes
+    model.efficiency_dynamic_tes = efficiency_dynamic_tes
+    model.p_nom_hp = p_nom_hp
+    model.cop = cop
+    model.heat_demand = heat_demand
+    model.use_binaries_hp = use_binaries
+    # set up variables
+    model.charging_hp_th = pm.Var(model.cells_set, model.time_set,
+                                  bounds=lambda m, c, t: (0, p_nom_hp[c]))
+    model.charging_hp_el = pm.Var(model.cells_set, model.time_set)
+    model.energy_tes = pm.Var(model.cells_set, model.time_set,
+                              bounds=lambda m, c, t: (0, capacity_tes[c]))
+    model.charging_tes = pm.Var(model.cells_set, model.time_set, bounds=(0, None))
+    model.discharging_tes = pm.Var(model.cells_set, model.time_set, bounds=(0, None))
+    if use_binaries is True:
+        model.y_charge_tes = pm.Var(
+            model.cells_set,
+            model.time_set,
+            within=pm.Binary,
+            doc='Binary defining for each timestep t if TES is charging'
+        )
+        model.y_discharge_tes = pm.Var(
+            model.cells_set,
+            model.time_set,
+            within=pm.Binary,
+            doc='Binary defining for each timestep t if TES is discharging'
+        )
+    # add constraints
+    model.EnergyConversionHP = \
+        pm.Constraint(model.cells_set, model.time_set, rule=energy_conversion_hp)
+    model.EnergyBalanceHPTES = \
+        pm.Constraint(model.cells_set, model.time_set, rule=energy_balance_hp_tes)
+    model.FixedEnergyTES = \
+        pm.Constraint(model.cells_set, model.times_fixed_soc,
+                      rule=fixed_energy_level_tes)
+    model.ChargingTES = \
+        pm.Constraint(model.cells_set, model.time_set, rule=charging_tes)
+    if use_binaries:
+        model.NoSimultaneousChargingAndDischargingTES = pm.Constraint(
+            model.cells_set, model.time_set, rule=charge_discharge_tes_binaries)
+    return model
+
+
 def add_hp_energy_level(model, mode="minimize", energy_consumption=None):
     """
     Method to add overall energy level. Used to determine maximum and minimum energy

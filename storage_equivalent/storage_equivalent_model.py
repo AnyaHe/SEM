@@ -42,26 +42,54 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
 
     def meet_residual_load(model, time):
         if hasattr(model, "charging_hp_el"):
-            hp_el = model.charging_hp_el[time]
+            if hasattr(model, "cells_set"):
+                hp_el = \
+                    sum(model.charging_hp_el[cell, time] for cell in model.cells_set)
+            else:
+                hp_el = model.charging_hp_el[time]
         else:
             hp_el = 0
         if hasattr(model, "charging_ev"):
             if hasattr(model, "discharging_ev"):
                 if model.use_binaries_ev:
-                    discharging_ev = sum(model.y_discharge_ev[cp, time] *
-                                      model.discharging_ev[cp, time]
-                                      for cp in model.charging_points_set)
+                    if hasattr(model, "cells_set"):
+                        discharging_ev = sum(model.y_discharge_ev[cp, cell, time] *
+                                             model.discharging_ev[cp, cell, time]
+                                             for cp in model.charging_points_set
+                                             for cell in model.cells_set)
+                    else:
+                        discharging_ev = sum(model.y_discharge_ev[cp, time] *
+                                          model.discharging_ev[cp, time]
+                                          for cp in model.charging_points_set)
                 else:
-                    discharging_ev = sum(model.discharging_ev[cp, time]
-                                      for cp in model.charging_points_set)
+                    if hasattr(model, "cells_set"):
+                        discharging_ev = sum(model.discharging_ev[cp, cell, time]
+                                             for cp in model.charging_points_set
+                                             for cell in model.cells_set)
+                    else:
+                        discharging_ev = sum(model.discharging_ev[cp, time]
+                                             for cp in model.charging_points_set)
             else:
                 discharging_ev = 0
             if model.use_binaries_ev:
-                charging_ev = sum([model.y_charge_ev[cp, time] * model.charging_ev[cp, time]
-                                for cp in model.charging_points_set])
+                if hasattr(model, "cells_set"):
+                    charging_ev = sum(
+                        [model.y_charge_ev[cp, cell, time] *
+                         model.charging_ev[cp, cell, time]
+                         for cp in model.charging_points_set
+                         for cell in model.cells_set])
+                else:
+                    charging_ev = sum([model.y_charge_ev[cp, time] *
+                                       model.charging_ev[cp, time]
+                                       for cp in model.charging_points_set])
             else:
-                charging_ev = sum([model.charging_ev[cp, time]
-                                for cp in model.charging_points_set])
+                if hasattr(model, "cells_set"):
+                    charging_ev = sum([model.charging_ev[cp, cell, time]
+                                       for cp in model.charging_points_set
+                                       for cell in model.cells_set])
+                else:
+                    charging_ev = sum([model.charging_ev[cp, time]
+                                    for cp in model.charging_points_set])
             ev = charging_ev - discharging_ev
         else:
             ev = 0
@@ -236,12 +264,12 @@ def add_storage_equivalents_model(model, residual_load, connections, flows, **kw
     model.cells_set = pm.Set(initialize=residual_load.columns)
     model.flows_set = pm.Set(initialize=flows.index)
     # set up variables
-    model.caps_pos = pm.Var(model.cells_set, model.time_horizons_set)
-    model.caps_neg = pm.Var(model.cells_set, model.time_horizons_set)
+    # model.caps_pos = pm.Var(model.cells_set, model.time_horizons_set)
+    # model.caps_neg = pm.Var(model.cells_set, model.time_horizons_set)
     model.energy_levels = pm.Var(model.cells_set, model.time_horizons_set, model.time_set)
     model.charging = pm.Var(model.cells_set, model.time_horizons_set, model.time_set)
-    model.charging_max = pm.Var(model.cells_set, model.time_horizons_set)
-    model.abs_charging = pm.Var(model.cells_set, model.time_horizons_set, model.time_set)
+    # model.charging_max = pm.Var(model.cells_set, model.time_horizons_set)
+    # model.abs_charging = pm.Var(model.cells_set, model.time_horizons_set, model.time_set)
     model.flows = pm.Var(model.flows_set, model.time_set)
     model.shedding = pm.Var(model.time_set, bounds=(0, None))
     model.spilling = pm.Var(model.time_set, bounds=(0, None))
@@ -257,16 +285,16 @@ def add_storage_equivalents_model(model, residual_load, connections, flows, **kw
     model.ChargingStorages = pm.Constraint(model.cells_set, model.time_horizons_set, model.time_set,
                                            rule=charge_storages)
     model.ResidualLoad = pm.Constraint(model.cells_set, model.time_set, rule=meet_residual_load)
-    model.MaximumCharging = pm.Constraint(model.cells_set, model.time_horizons_set, model.time_set,
-                                          rule=maximum_charging)
-    model.MaximumCapacity = pm.Constraint(model.cells_set, model.time_horizons_set, model.time_set,
-                                          rule=maximum_capacity)
-    model.MinimumCapacity = pm.Constraint(model.cells_set, model.time_horizons_set, model.time_set,
-                                          rule=minimum_capacity)
-    model.UpperChargingCapRatio = pm.Constraint(model.cells_set, model.time_horizons_set,
-                                                rule=charging_cap_ratio_upper)
-    model.LowerChargingCapRatio = pm.Constraint(model.cells_set, model.time_horizons_set,
-                                                rule=charging_cap_ratio_lower)
+    # model.MaximumCharging = pm.Constraint(model.cells_set, model.time_horizons_set, model.time_set,
+    #                                       rule=maximum_charging)
+    # model.MaximumCapacity = pm.Constraint(model.cells_set, model.time_horizons_set, model.time_set,
+    #                                       rule=maximum_capacity)
+    # model.MinimumCapacity = pm.Constraint(model.cells_set, model.time_horizons_set, model.time_set,
+    #                                       rule=minimum_capacity)
+    # model.UpperChargingCapRatio = pm.Constraint(model.cells_set, model.time_horizons_set,
+    #                                             rule=charging_cap_ratio_upper)
+    # model.LowerChargingCapRatio = pm.Constraint(model.cells_set, model.time_horizons_set,
+    #                                             rule=charging_cap_ratio_lower)
     model.UpperAbsCharging = pm.Constraint(model.cells_set, model.time_horizons_set, model.time_set,
                                            rule=abs_charging_up)
     model.LowerAbsCharging = pm.Constraint(model.cells_set, model.time_horizons_set, model.time_set,
