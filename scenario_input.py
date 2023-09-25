@@ -101,6 +101,16 @@ def scenario_variation_distribution_grids():
     return scenarios
 
 
+def scenario_variation_overcapacities():
+    scenarios = scenario_variation_distribution_grids()
+    scenarios["DG_base"] = {
+            "ev_mode": None, "flexible_ev_use_cases": [],
+            "ev_extended_flex": False, "ev_v2g": False,
+            "hp_mode": None
+        }
+    return scenarios
+
+
 def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
     """
     Method defining the default scenario input for three different storage equivalents:
