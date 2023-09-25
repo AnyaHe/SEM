@@ -192,6 +192,7 @@ def add_heat_pump_model_cells(
     model.charging_hp_th = pm.Var(model.cells_set, model.time_set,
                                   bounds=lambda m, c, t: (0, p_nom_hp[c]))
     model.charging_hp_el = pm.Var(model.cells_set, model.time_set)
+    model.shedding_hp_el = pm.Var(model.cells_set, model.time_set, bounds=(0, None))
     model.energy_tes = pm.Var(model.cells_set, model.time_set,
                               bounds=lambda m, c, t: (0, capacity_tes[c]))
     model.charging_tes = pm.Var(model.cells_set, model.time_set, bounds=(0, None))

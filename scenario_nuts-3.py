@@ -124,7 +124,7 @@ if __name__ == "__main__":
         # try:
         print(f"Start solving scenario {scenario}")
         # create results directory
-        res_dir = os.path.join(f"results/test_to_delete/{scenario}")
+        res_dir = os.path.join(f"results/se2_distribution_grids/{scenario}")
         os.makedirs(res_dir, exist_ok=True)
         # if os.path.isfile(os.path.join(res_dir, "storage_equivalents.csv")):
         #     print(f"Scenario {scenario} already solved. Skipping scenario.")
@@ -176,14 +176,15 @@ if __name__ == "__main__":
             dg_name=dg_names[0]
         )
         dg_constraints = {
-            "upper_power": pd.Series(index=dg_names, data=None),
-            "lower_power": pd.Series(index=dg_names, data=None),
+            "upper_power": pd.DataFrame(columns=dg_names, data=None),
+            "lower_power": pd.DataFrame(columns=dg_names, data=None),
         }
         # initialise result
         shifted_energy_df = pd.DataFrame()
         shifted_energy_rel_df = pd.DataFrame()
         storage_durations = pd.DataFrame()
         energy_consumed = pd.DataFrame()
+        shedding_dg = pd.DataFrame(columns=["shed_ev", "shed_hp"])
         # iterate through reinforcement scenarios
         for val in scenario_dict[scenario_dict["varied_parameter"]]:
             try:
@@ -205,10 +206,10 @@ if __name__ == "__main__":
                     if "upper_power" not in flexibility_bands:
                         p_max_ev = 0
                     else:
-                        p_max_ev = flexibility_bands["upper_power"].max().sum()
-                    dg_constraints["upper_power"][dg_names] = \
-                        val * (p_nom_hp + p_max_ev)
-                    dg_constraints["lower_power"][dg_names] = \
+                        p_max_ev = flexibility_bands["upper_power"].sum(axis=1)
+                    dg_constraints["upper_power"][dg_names[0]] = \
+                        val * (p_nom_hp[dg_names[0]] + p_max_ev)
+                    dg_constraints["lower_power"][dg_names[0]] = \
                         - val * p_max_ev
                 # get flexible charging points
                 flexible_cps = scenario_dict["use_cases_flexible"]
@@ -296,7 +297,6 @@ if __name__ == "__main__":
                                                         varied_parameter],
                                                  data=[energy_ev_tmp, sum_energy_heat_tmp,
                                                        val]).T
-
                     if iter_i == 0:
                         charging.to_csv(f"{res_dir}/charging_{val}.csv")
                         energy_levels.to_csv(f"{res_dir}/energy_levels_{val}.csv")
@@ -347,6 +347,14 @@ if __name__ == "__main__":
                              sum_energy_heat + energy_ev) * 100
                         shifted_energy_rel_df = pd.concat([shifted_energy_rel_df, df_tmp])
                         energy_consumed = pd.concat([energy_consumed, df_energy_tmp])
+                        if hasattr(model, "shedding_ev"):
+                            shedding_dg.loc[val, "shed_ev"] = pd.Series(
+                                model_tmp.shedding_ev.extract_values()
+                            ).unstack().sum().sum().sum()
+                        if hasattr(model, "shedding_hp_el"):
+                            shedding_dg.loc[val, "shed_hp"] = pd.Series(
+                                model_tmp.shedding_hp_el.extract_values()
+                            ).unstack().sum().sum()
                     else:
                         assert np.isclose(df_tmp, shifted_energy_df.loc[
                             (shifted_energy_df["nr_hp"] == nr_hp_mio) &
@@ -360,6 +368,8 @@ if __name__ == "__main__":
         shifted_energy_df.to_csv(f"{res_dir}/storage_equivalents.csv")
         shifted_energy_rel_df.to_csv(
             f"{res_dir}/storage_equivalents_relative.csv")
+        shedding_dg.to_csv(
+            f"{res_dir}/shedding_dg.csv")
         if extract_storage_duration:
             storage_durations.to_csv(f"{res_dir}/storage_durations.csv")
         energy_consumed.to_csv(f"{res_dir}/energy_consumed.csv")

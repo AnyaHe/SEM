@@ -48,6 +48,8 @@ def get_power_flexible_technologies(model, time, cells=None):
                 sum(model.charging_hp_el[cell, time] for cell in cells)
         else:
             hp_el = model.charging_hp_el[time]
+        if hasattr(model, "shedding_hp_el"):
+            hp_el -= sum(model.shedding_hp_el[cell, time] for cell in cells)
     else:
         hp_el = 0
     if hasattr(model, "charging_ev"):
@@ -91,7 +93,15 @@ def get_power_flexible_technologies(model, time, cells=None):
             else:
                 charging_ev = sum([model.charging_ev[cp, time]
                                    for cp in model.charging_points_set])
-        ev = charging_ev - discharging_ev
+
+        if hasattr(model, "shedding_ev"):
+            shed_ev = sum(
+                [model.shedding_ev[cp, cell, time]
+                 for cp in model.charging_points_set
+                 for cell in cells])
+        else:
+            shed_ev = 0
+        ev = charging_ev - shed_ev - discharging_ev
     else:
         ev = 0
     return ev, hp_el
@@ -332,14 +342,29 @@ def get_slacks(model):
                        for cp in model.charging_points_set for time in model.time_set)
     else:
         slack_ev = 0
+    # extract shedding ev if dg constraints are present
+    if hasattr(model, "shedding_ev"):
+        shed_ev = sum(
+            [model.shedding_ev[cp, cell, time]
+             for cp in model.charging_points_set
+             for cell in model.cells_set for time in model.time_set])
+    else:
+        shed_ev = 0
     # extract slack for simultaneous charging and discharging tes
     if hasattr(model, "discharging_tes") and not model.use_binaries_hp:
         slack_tes = sum(model.charging_tes[time]*model.discharging_tes[time]
                         for time in model.time_set)
     else:
         slack_tes = 0
+        # extract shedding ev if dg constraints are present
+    if hasattr(model, "shedding_hp_el"):
+        shed_hp = sum(
+            [model.shedding_hp_el[cell, time]
+             for cell in model.cells_set for time in model.time_set])
+    else:
+        shed_hp = 0
     return sum(model.spilling[time] + model.shedding[time]
-               for time in model.time_set) + slack_ev + slack_tes
+               for time in model.time_set) + slack_ev + slack_tes + shed_ev + shed_hp
 
 
 def minimize_cap(model):

@@ -245,6 +245,8 @@ def add_evs_model_cells(model, flex_use_cases, flex_bands, efficiency=0.9, v2g=F
         pm.Var(model.charging_points_set, model.cells_set, model.time_set,
                bounds=lambda m, cp, c, t:
                (0, m.flex_bands["upper_power"].iloc[t][f"{c}_{cp}"]))
+    model.shedding_ev = pm.Var(model.charging_points_set, model.cells_set,
+                               model.time_set, bounds=(0, None))
     if v2g:
         model.discharging_ev = \
             pm.Var(model.charging_points_set, model.cells_set, model.time_set,
