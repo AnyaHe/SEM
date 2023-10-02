@@ -74,7 +74,8 @@ def add_ev_model(model, flex_bands, charging_efficiency=0.9, v2g=False,
 
 
 def add_evs_model(model, flex_bands, efficiency=0.9, v2g=False,
-                  discharging_efficiency=0.9, use_binaries=False):
+                  discharging_efficiency=0.9, use_binaries=False,
+                  use_linear_penalty=False, **kwargs):
     def charging_ev(model, cp, time):
         """
         Constraint for charging of EV that has to ly between the lower and upper
@@ -113,9 +114,9 @@ def add_evs_model(model, flex_bands, efficiency=0.9, v2g=False,
 
     def fixed_energy_level(model, cp, time):
         '''
-        Constraint for fixed value of energy
+        Constraint for fixed value of energy (at beginning and end of modelled period)
         :param model:
-        :param charging_point:
+        :param cp:
         :param time:
         :return:
         '''
@@ -131,6 +132,12 @@ def add_evs_model(model, flex_bands, efficiency=0.9, v2g=False,
     model.discharging_efficiency_ev = discharging_efficiency
     model.flex_bands = flex_bands
     model.use_binaries_ev = use_binaries
+    model.use_linear_penalty_ev = use_linear_penalty
+    if use_binaries and use_linear_penalty:
+        print("Both binaries and linear penalty have been set to True for ev model. "
+              "Binaries are used in this case.")
+    if use_linear_penalty:
+        model.weight_ev = kwargs.get("weight_ev")
     # set up set
     model.charging_points_set = \
         pm.Set(initialize=model.flex_bands["lower_energy"].columns)

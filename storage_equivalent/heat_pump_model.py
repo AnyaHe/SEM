@@ -61,7 +61,7 @@ def model_input_hps(scenario_dict, hp_mode, i=None, nr_hp_mio=None):
 
 def add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, heat_demand,
                         efficiency_static_tes=0.99, efficiency_dynamic_tes=0.95,
-                        use_binaries=False):
+                        use_binaries=False, use_linear_penalty=False, **kwargs):
     def energy_conversion_hp(model, time):
         return model.charging_hp_el[time] * cop.loc[model.timeindex[time]] == \
             model.charging_hp_th[time]
@@ -108,6 +108,12 @@ def add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, heat_demand,
     model.cop = cop
     model.heat_demand = heat_demand
     model.use_binaries_hp = use_binaries
+    model.use_linear_penalty_tes = use_linear_penalty
+    if use_binaries and use_linear_penalty:
+        print("Both binaries and linear penalty have been set to True for hp model. "
+              "Binaries are used in this case.")
+    if use_linear_penalty:
+        model.weight_hp = kwargs.get("weight_hp")
     # set up variables
     model.charging_hp_th = pm.Var(model.time_set, bounds=(0, p_nom_hp))
     model.charging_hp_el = pm.Var(model.time_set)

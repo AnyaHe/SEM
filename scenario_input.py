@@ -182,7 +182,7 @@ def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
     return {
         "objective": "minimize_discharging",
         "weighting": [1.001, 1.001**2, 1.001**3],
-        "time_horizons": [24, 14*24, 24*364],
+        "time_horizons": [24, 14*24, 24*365],
         "time_increment": '1h',
         "ts_vres": vres.loc[timeindex],
         "ts_demand": demand.loc[timeindex],

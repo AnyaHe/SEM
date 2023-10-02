@@ -175,6 +175,7 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
     model.time_horizons = kwargs.get("time_horizons", [24, 7*24, 28*24, 24*366])
     model.coeff_min = kwargs.get("coeff_min", [0.25, 0.5, 1, 2])
     model.coeff_max = kwargs.get("coeff_max", [8, 12, 48, 96])
+    model.weight_slacks = kwargs.get("weights_slacks", 1e3)
     # add time horizon set
     model.time_horizons_set = pm.RangeSet(0, len(model.time_horizons)-1)
     # set up variables
@@ -338,8 +339,16 @@ def add_storage_equivalents_model(model, residual_load, connections, flows, **kw
 def get_slacks(model):
     # extract slack for simultaneous charging and discharging evs
     if hasattr(model, "discharging_ev") and not model.use_binaries_ev:
-        slack_ev = sum(model.charging_ev[cp, time]*model.discharging_ev[cp, time]
-                       for cp in model.charging_points_set for time in model.time_set)
+        if model.use_linear_penalty_ev:
+            slack_ev = sum(
+                model.charging_ev[cp, time] + model.discharging_ev[cp, time]
+                for cp in model.charging_points_set for time in model.time_set
+            ) / model.weight_slacks * model.weight_ev
+        else:
+            slack_ev = sum(
+                model.charging_ev[cp, time]*model.discharging_ev[cp, time]
+                for cp in model.charging_points_set for time in model.time_set
+            )
     else:
         slack_ev = 0
     # extract shedding ev if dg constraints are present
@@ -352,8 +361,16 @@ def get_slacks(model):
         shed_ev = 0
     # extract slack for simultaneous charging and discharging tes
     if hasattr(model, "discharging_tes") and not model.use_binaries_hp:
-        slack_tes = sum(model.charging_tes[time]*model.discharging_tes[time]
-                        for time in model.time_set)
+        if model.use_linear_penalty_tes:
+            slack_tes = sum(
+                model.charging_tes[time] + model.discharging_tes[time]
+                for time in model.time_set
+            ) / model.weight_slacks * model.weight_hp
+        else:
+            slack_tes = sum(
+                model.charging_tes[time]*model.discharging_tes[time]
+                for time in model.time_set
+            )
     else:
         slack_tes = 0
         # extract shedding ev if dg constraints are present
@@ -369,7 +386,7 @@ def get_slacks(model):
 
 def minimize_cap(model):
     # todo: determine good weighting factor
-    slacks = get_slacks(model) * 1e6
+    slacks = get_slacks(model) * model.weight_slacks
     return sum(model.weighting[time_horizon] * (model.caps_pos[time_horizon] +
                                                 model.caps_neg[time_horizon])
                for time_horizon in model.time_horizons_set) + slacks
@@ -377,7 +394,7 @@ def minimize_cap(model):
 
 def minimize_energy(model):
     # todo: determine good weighting factor
-    slacks = get_slacks(model) * 1e6
+    slacks = get_slacks(model) * model.weight_slacks
     return sum(model.weighting[time_horizon] * sum(model.abs_charging[time_horizon, time]
                                                    for time in model.time_set)
                for time_horizon in model.time_horizons_set) + slacks
@@ -385,7 +402,7 @@ def minimize_energy(model):
 
 def minimize_discharging(model):
     # todo: determine good weighting factor
-    slacks = get_slacks(model) * 1e6 * len(model.time_set)
+    slacks = get_slacks(model) * model.weight_slacks
     return sum(model.weighting[time_horizon] * sum(model.discharging[time_horizon, time]
                                                    for time in model.time_set)
                for time_horizon in model.time_horizons_set) + slacks
@@ -393,7 +410,7 @@ def minimize_discharging(model):
 
 def minimize_energy_and_power(model):
     # todo: determine good weighting factor
-    slacks = get_slacks(model) * 1e6
+    slacks = get_slacks(model) * model.weight_slacks
     if hasattr(model, "charging_hp_el") and (model.p_nom_hp > 0):
         hp_el = sum([(model.charging_hp_el[time]/model.p_nom_hp)**2
                      for time in model.time_set])
