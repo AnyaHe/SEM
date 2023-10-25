@@ -144,7 +144,29 @@ def add_heat_pump_model(model, p_nom_hp, capacity_tes, cop, heat_demand,
 
 def add_heat_pump_model_cells(
         model, p_nom_hp, capacity_tes, cop, heat_demand, efficiency_static_tes=0.99,
-        efficiency_dynamic_tes=0.95, use_binaries=False):
+        efficiency_dynamic_tes=0.95, use_binaries=False, use_linear_penalty=False,
+        **kwargs):
+    """
+
+
+    Parameters
+    ----------
+    model
+    p_nom_hp
+    capacity_tes
+    cop
+    heat_demand
+    efficiency_static_tes
+    efficiency_dynamic_tes
+    use_binaries
+    use_linear_penalty
+    kwargs
+        "weight_hp": weight of linear penalty in objective function
+
+    Returns
+    -------
+
+    """
 
     def energy_conversion_hp(model, cell, time):
         return model.charging_hp_el[cell, time] * cop.loc[model.timeindex[time]] == \
@@ -186,6 +208,9 @@ def add_heat_pump_model_cells(
 
     def charge_discharge_tes_binaries(model, cell, time):
         return model.y_charge_tes[cell, time] + model.y_discharge_tes[cell, time] <= 1
+
+    def upper_shedding_hp_el(model, cell, time):
+        return model.shedding_hp_el[cell, time] <= model.charging_hp_el[cell, time]
     # save fix parameters
     model.capacity_tes = capacity_tes
     model.efficiency_static_tes = efficiency_static_tes
@@ -194,6 +219,12 @@ def add_heat_pump_model_cells(
     model.cop = cop
     model.heat_demand = heat_demand
     model.use_binaries_hp = use_binaries
+    model.use_linear_penalty_tes = use_linear_penalty
+    if use_binaries and use_linear_penalty:
+        print("Both binaries and linear penalty have been set to True for hp model. "
+              "Binaries are used in this case.")
+    if use_linear_penalty:
+        model.weight_hp = kwargs.get("weight_hp")
     # set up variables
     model.charging_hp_th = pm.Var(model.cells_set, model.time_set,
                                   bounds=lambda m, c, t: (0, p_nom_hp[c]))
@@ -229,6 +260,8 @@ def add_heat_pump_model_cells(
     if use_binaries:
         model.NoSimultaneousChargingAndDischargingTES = pm.Constraint(
             model.cells_set, model.time_set, rule=charge_discharge_tes_binaries)
+    model.UpperSheddingHP = \
+        pm.Constraint(model.cells_set, model.time_set, rule=upper_shedding_hp_el)
     return model
 
 
@@ -289,7 +322,8 @@ def reduced_operation(model):
 
 
 # def abs_objective(model):
-#     return sum(model.charging_tes[time]*model.charging_hp_el[time] for time in model.time_set)
+#     return sum(model.charging_tes[time]*model.charging_hp_el[time]
+#     for time in model.time_set)
 
 
 if __name__ == "__main__":

@@ -78,7 +78,7 @@ def add_evs_model(model, flex_bands, efficiency=0.9, v2g=False,
                   use_linear_penalty=False, **kwargs):
     def charging_ev(model, cp, time):
         """
-        Constraint for charging of EV that has to ly between the lower and upper
+        Constraint for charging of EV that has to lie between the lower and upper
         energy band.
 
         :param model:
@@ -183,7 +183,28 @@ def add_evs_model(model, flex_bands, efficiency=0.9, v2g=False,
 
 
 def add_evs_model_cells(model, flex_use_cases, flex_bands, efficiency=0.9, v2g=False,
-                        discharging_efficiency=0.9, use_binaries=False):
+                        discharging_efficiency=0.9, use_binaries=False,
+                        use_linear_penalty=False, **kwargs):
+    """
+    Add EVs to cell implementation.
+
+    Parameters
+    ----------
+    model
+    flex_use_cases
+    flex_bands
+    efficiency
+    v2g
+    discharging_efficiency
+    use_binaries
+    use_linear_penalty
+    kwargs
+        "weight_ev": weight for linear penalty in objective
+
+    Returns
+    -------
+
+    """
     def charging_ev(model, cp, cell, time):
         """
         Constraint for charging of EV that has to ly between the lower and upper
@@ -239,11 +260,20 @@ def add_evs_model_cells(model, flex_use_cases, flex_bands, efficiency=0.9, v2g=F
         return model.y_charge_ev[cp, cell, time] + \
                model.y_discharge_ev[cp, cell, time] <= 1
 
+    def upper_shedding_ev(model, cp, cell, time):
+        return model.shedding_ev[cp, cell, time] <= model.charging_ev[cp, cell, time]
+
     # save fix parameters
     model.charging_efficiency_ev = efficiency
     model.discharging_efficiency_ev = discharging_efficiency
     model.flex_bands = flex_bands
     model.use_binaries_ev = use_binaries
+    model.use_linear_penalty_ev = use_linear_penalty
+    if use_binaries and use_linear_penalty:
+        print("Both binaries and linear penalty have been set to True for ev model. "
+              "Binaries are used in this case.")
+    if use_linear_penalty:
+        model.weight_ev = kwargs.get("weight_ev")
     # set up set
     model.charging_points_set = \
         pm.Set(initialize=flex_use_cases)
@@ -252,8 +282,9 @@ def add_evs_model_cells(model, flex_use_cases, flex_bands, efficiency=0.9, v2g=F
         pm.Var(model.charging_points_set, model.cells_set, model.time_set,
                bounds=lambda m, cp, c, t:
                (0, m.flex_bands["upper_power"].iloc[t][f"{c}_{cp}"]))
-    model.shedding_ev = pm.Var(model.charging_points_set, model.cells_set,
-                               model.time_set, bounds=(0, None))
+    model.shedding_ev = \
+        pm.Var(model.charging_points_set, model.cells_set,
+               model.time_set, bounds=(0, None))
     if v2g:
         model.discharging_ev = \
             pm.Var(model.charging_points_set, model.cells_set, model.time_set,
@@ -292,6 +323,9 @@ def add_evs_model_cells(model, flex_use_cases, flex_bands, efficiency=0.9, v2g=F
     model.FixedEVEnergyLevel = \
         pm.Constraint(model.charging_points_set, model.cells_set, model.times_fixed_soc,
                       rule=fixed_energy_level)
+    model.UpperSheddingEV = \
+        pm.Constraint(model.charging_points_set, model.cells_set, model.time_set,
+                      rule=upper_shedding_ev)
     return model
 
 
