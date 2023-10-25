@@ -5,7 +5,7 @@ import numpy as np
 
 from scenario_input import base_scenario, scenario_variation_distribution_grids, \
     scenario_input_hps, scenario_input_evs, adjust_timeseries_data, \
-    get_new_residual_load, save_scenario_dict
+    get_new_residual_load, save_scenario_dict, shift_and_extend_ts_by_one_timestep
 from storage_equivalent import storage_equivalent_model as se
 from storage_equivalent.dg_model import add_dg_model
 from storage_equivalent.heat_pump_model import model_input_hps
@@ -112,9 +112,30 @@ def refactor_hp_data(p_nom, c_tes, demand_th, dg_name):
 
 if __name__ == "__main__":
     solver = "gurobi"
-    use_binaries = True
     varied_parameter = "dg_reinforcement"
-    variations = [1.0, 0.5, 0.2, 0.1, 0.05, 0.0]
+    # read bands Julian
+    path = r"\\192.168.10.221\RL-Institut\05_Temp\JulianE\Anya\2534\potential"
+    tail = "maximize_grid_power/concat/2534_grid_power_flexible.csv"
+    res_dir = f"{path}/minimize_loading/{tail}"
+    upper_power_min = pd.read_csv(res_dir, index_col=0, parse_dates=True)
+    res_dir = f"{path}/100_pct_reinforced/{tail}"
+    upper_power_max = pd.read_csv(res_dir, index_col=0, parse_dates=True)
+    allowed_power_relative = \
+        upper_power_min.sum(axis=1).divide(upper_power_max.sum(axis=1))
+    var_1 = pd.concat([allowed_power_relative[:168]] * 52)
+    var_2 = pd.concat([allowed_power_relative[168:]] * 52)
+    var_1.index = pd.date_range("2011-1-1", periods=len(var_1), freq="1h")
+    var_2.index = pd.date_range("2011-1-1", periods=len(var_2), freq="1h")
+    var_0 = var_1.copy()
+    var_0[:] = 1.0
+    var_0.name = "reference"
+    var_1.name = "week_1"
+    var_2.name = "week_2"
+    variations = [] # [1.0, 0.5, 0.2, 0.1, 0.05, 0.0]
+    for var in [var_0, var_1, var_2]:
+        var_new = shift_and_extend_ts_by_one_timestep(var, value=var[-1])
+        var_new.name = var.name
+        variations.append(var_new)
     extract_storage_duration = False
     nr_iterations = 1
     dg_names = ["0"]
@@ -124,7 +145,7 @@ if __name__ == "__main__":
         # try:
         print(f"Start solving scenario {scenario}")
         # create results directory
-        res_dir = os.path.join(f"results/se2_distribution_grids/{scenario}")
+        res_dir = os.path.join(f"results/se2_distribution_grids_bands/{scenario}")
         os.makedirs(res_dir, exist_ok=True)
         # if os.path.isfile(os.path.join(res_dir, "storage_equivalents.csv")):
         #     print(f"Scenario {scenario} already solved. Skipping scenario.")
@@ -134,26 +155,29 @@ if __name__ == "__main__":
         scenario_dict.update(scenario_input)
         scenario_dict["solver"] = solver
         scenario_dict["varied_parameter"] = varied_parameter
-        scenario_dict[varied_parameter] = variations
+        if not isinstance(variations[0], pd.Series):
+            scenario_dict[varied_parameter] = variations
         # load hp data if required
         if scenario_dict["hp_mode"] is not None:
-            scenario_dict = scenario_input_hps(scenario_dict=scenario_dict,
-                                               mode=scenario_dict["hp_mode"],
-                                               use_binaries=use_binaries)
+            scenario_dict = scenario_input_hps(
+                scenario_dict=scenario_dict,
+                mode=scenario_dict["hp_mode"],
+                use_binaries=scenario_dict["use_binaries"]
+            )
             if scenario_dict["hp_mode"] == "flexible":
                 scenario_dict["capacity_single_tes"] = \
                     scenario_dict["tes_relative_size"] * scenario_dict[
                         "capacity_single_tes"]
         # load ev data if required
         if scenario_dict["ev_mode"] is not None:
-            scenario_dict = scenario_input_evs(scenario_dict=scenario_dict,
-                                               mode=scenario_dict["ev_mode"],
-                                               use_cases_flexible=scenario_dict[
-                                                   "flexible_ev_use_cases"],
-                                               extended_flex=scenario_dict[
-                                                   "ev_extended_flex"],
-                                               v2g=scenario_dict["ev_v2g"],
-                                               use_binaries=use_binaries)
+            scenario_dict = scenario_input_evs(
+                scenario_dict=scenario_dict,
+                mode=scenario_dict["ev_mode"],
+                use_cases_flexible=scenario_dict["flexible_ev_use_cases"],
+                extended_flex=scenario_dict["ev_extended_flex"],
+                v2g=scenario_dict["ev_v2g"],
+                use_binaries=scenario_dict["use_binaries"],
+            )
         # shift timeseries
         scenario_dict = adjust_timeseries_data(scenario_dict)
         # adjust model input to hps and evs
@@ -175,42 +199,47 @@ if __name__ == "__main__":
             p_nom=p_nom_hp, c_tes=capacity_tes, demand_th=ts_heat_demand,
             dg_name=dg_names[0]
         )
-        dg_constraints = {
-            "upper_power": pd.DataFrame(columns=dg_names, data=None),
-            "lower_power": pd.DataFrame(columns=dg_names, data=None),
-        }
         # initialise result
         shifted_energy_df = pd.DataFrame()
         shifted_energy_rel_df = pd.DataFrame()
         storage_durations = pd.DataFrame()
         energy_consumed = pd.DataFrame()
         shedding_dg = pd.DataFrame(columns=["shed_ev", "shed_hp"])
-        # iterate through reinforcement scenarios
-        for val in scenario_dict[scenario_dict["varied_parameter"]]:
-            try:
-                new_res_load = get_new_residual_load(
-                    scenario_dict=scenario_dict,
-                    sum_energy_heat=sum_energy_heat,
-                    energy_ev=energy_ev,
-                    ref_charging=ref_charging,
-                    ts_heat_el=ts_heat_el,
-                )
 
+        new_res_load = get_new_residual_load(
+            scenario_dict=scenario_dict,
+            sum_energy_heat=sum_energy_heat,
+            energy_ev=energy_ev,
+            ref_charging=ref_charging,
+            ts_heat_el=ts_heat_el,
+        )
+        # iterate through reinforcement scenarios
+        for val in variations:
+            if isinstance(val, pd.Series):
+                val_id = val.name
+            else:
+                val_id = val
+            try:
+                dg_constraints = {
+                    "upper_power": pd.DataFrame(
+                        columns=dg_names, data=None, index=new_res_load.index),
+                    "lower_power": pd.DataFrame(
+                        columns=dg_names, data=None, index=new_res_load.index),
+                }
                 # initialise base model
                 model = se.set_up_base_model(scenario_dict=scenario_dict,
                                              new_res_load=new_res_load)
                 flexible_evs = scenario_dict["ev_mode"] == "flexible"
                 flexible_hps = scenario_dict["hp_mode"] == "flexible"
                 # Fixme: Should work differently in the end
-                if isinstance(val, float):
-                    if "upper_power" not in flexibility_bands:
-                        p_max_ev = 0
-                    else:
-                        p_max_ev = flexibility_bands["upper_power"].sum(axis=1)
-                    dg_constraints["upper_power"][dg_names[0]] = \
-                        val * (p_nom_hp[dg_names[0]] + p_max_ev)
-                    dg_constraints["lower_power"][dg_names[0]] = \
-                        - val * p_max_ev
+                if "upper_power" not in flexibility_bands:
+                    p_max_ev = 0
+                else:
+                    p_max_ev = flexibility_bands["upper_power"].sum(axis=1)
+                dg_constraints["upper_power"][dg_names[0]] = \
+                    val * (p_nom_hp[dg_names[0]] + p_max_ev)
+                dg_constraints["lower_power"][dg_names[0]] = \
+                    - val * p_max_ev
                 # get flexible charging points
                 flexible_cps = scenario_dict["use_cases_flexible"]
                 if scenario_dict["ev_extended_flex"]:
@@ -227,13 +256,16 @@ if __name__ == "__main__":
                     v2g=scenario_dict["ev_v2g"],
                     efficiency=scenario_dict["ev_charging_efficiency"],
                     discharging_efficiency=scenario_dict["ev_discharging_efficiency"],
-                    use_binaries=use_binaries,
+                    use_binaries=scenario_dict["use_binaries"],
                     p_nom_hp=p_nom_hp,
                     capacity_tes=capacity_tes,
                     cop=scenario_dict["ts_cop"],
                     heat_demand=heat_demand,
                     efficiency_static_tes=scenario_dict["efficiency_static_tes"],
                     efficiency_dynamic_tes=scenario_dict["efficiency_dynamic_tes"],
+                    use_linear_penalty=scenario_dict["use_linear_penalty"],
+                    weight_ev=scenario_dict["weights_linear_penalty"],
+                    weight_hp=scenario_dict["weights_linear_penalty"]
                 )
                 model = se.add_storage_equivalent_model(
                     model, new_res_load, time_horizons=scenario_dict["time_horizons"])
@@ -267,7 +299,7 @@ if __name__ == "__main__":
                     if extract_storage_duration:
                         storage_durations = pd.concat([storage_durations,
                                                        se.determine_storage_durations(
-                                                           charging, val)])
+                                                           charging, val_id)])
                     energy_levels = \
                         pd.Series(
                             model_tmp.energy_levels.extract_values()).unstack().T.set_index(
@@ -275,7 +307,7 @@ if __name__ == "__main__":
                     discharging = pd.Series(model_tmp.discharging.extract_values()).unstack()
                     df_tmp = (discharging.sum(axis=1)).reset_index().rename(
                         columns={"index": "storage_type", 0: "energy_stored"})
-                    df_tmp[varied_parameter] = val
+                    df_tmp[varied_parameter] = val_id
                     # extract energy values hps
                     if scenario_dict["hp_mode"] == "flexible":
                         sum_energy_heat_tmp = pd.Series(
@@ -284,7 +316,8 @@ if __name__ == "__main__":
                         sum_energy_heat_tmp = sum_energy_heat
                     # extract energy values evs
                     if scenario_dict["ev_mode"] == "flexible":
-                        ev_operation = pd.Series(model.charging_ev.extract_values()).unstack().T
+                        ev_operation = \
+                            pd.Series(model.charging_ev.extract_values()).unstack().T
                         if scenario_dict["ev_v2g"]:
                             ev_operation -= pd.Series(
                                 model.discharging_ev.extract_values()).unstack().T
@@ -292,23 +325,23 @@ if __name__ == "__main__":
                     else:
                         energy_ev_tmp = energy_ev
                     # write into data frame to save
-                    df_energy_tmp = pd.DataFrame(columns=[val],
+                    df_energy_tmp = pd.DataFrame(columns=[val_id],
                                                  index=["energy_ev", "energy_hp",
                                                         varied_parameter],
                                                  data=[energy_ev_tmp, sum_energy_heat_tmp,
-                                                       val]).T
+                                                       val_id]).T
                     if iter_i == 0:
-                        charging.to_csv(f"{res_dir}/charging_{val}.csv")
-                        energy_levels.to_csv(f"{res_dir}/energy_levels_{val}.csv")
+                        charging.to_csv(f"{res_dir}/charging_{val_id}.csv")
+                        energy_levels.to_csv(f"{res_dir}/energy_levels_{val_id}.csv")
                         # save flexible hp operation
-                        if (scenario_dict["hp_mode"] == "flexible") & (nr_hp_mio == 20.0):
+                        if scenario_dict["hp_mode"] == "flexible":
                             hp_operation = pd.Series(model_tmp.charging_hp_el.extract_values())
                             hp_operation.index = scenario_dict["ts_demand"].index
                             hp_operation.to_csv(f"{res_dir}/hp_charging_flexible.csv")
                             charging_tes = pd.Series(model_tmp.charging_tes.extract_values())
                             discharging_tes = pd.Series(
                                 model_tmp.discharging_tes.extract_values())
-                            if use_binaries:
+                            if scenario_dict["use_binaries"]:
                                 charging_tes *= pd.Series(
                                     model_tmp.y_charge_tes.extract_values())
                                 discharging_tes *= pd.Series(
@@ -320,11 +353,11 @@ if __name__ == "__main__":
                             tes_energy.index = scenario_dict["ts_demand"].index
                             tes_energy.to_csv(f"{res_dir}/tes_energy_flexible.csv")
                         # save flexible ev operation
-                        if (scenario_dict["ev_mode"] == "flexible") & (nr_ev_mio == 40.0):
+                        if scenario_dict["ev_mode"] == "flexible":
                             ev_operation = pd.Series(
                                 model_tmp.charging_ev.extract_values()).unstack().T
                             if scenario_dict["ev_v2g"]:
-                                if use_binaries:
+                                if scenario_dict["use_binaries"]:
                                     ev_operation *= pd.Series(
                                         model_tmp.y_charge_ev.extract_values()).unstack().T
                                     ev_operation -= pd.Series(
@@ -348,11 +381,11 @@ if __name__ == "__main__":
                         shifted_energy_rel_df = pd.concat([shifted_energy_rel_df, df_tmp])
                         energy_consumed = pd.concat([energy_consumed, df_energy_tmp])
                         if hasattr(model, "shedding_ev"):
-                            shedding_dg.loc[val, "shed_ev"] = pd.Series(
+                            shedding_dg.loc[val_id, "shed_ev"] = pd.Series(
                                 model_tmp.shedding_ev.extract_values()
                             ).unstack().sum().sum().sum()
                         if hasattr(model, "shedding_hp_el"):
-                            shedding_dg.loc[val, "shed_hp"] = pd.Series(
+                            shedding_dg.loc[val_id, "shed_hp"] = pd.Series(
                                 model_tmp.shedding_hp_el.extract_values()
                             ).unstack().sum().sum()
                     else:
@@ -361,7 +394,7 @@ if __name__ == "__main__":
                             (shifted_energy_df["nr_ev"] == nr_ev_mio)],
                                           rtol=1e-04, atol=1e-02).all().all()
             except Exception as e:
-                print(f"Something went wrong in scenario {scenario}, iteration {val}. "
+                print(f"Something went wrong in scenario {scenario}, iteration {val_id}. "
                       f"Skipping.")
                 print(e)
 
