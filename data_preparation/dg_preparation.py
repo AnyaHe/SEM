@@ -1,5 +1,3 @@
-# has to be run with edisgo environment
-
 import logging
 from numpy.random import choice
 import numpy as np
@@ -14,7 +12,7 @@ from edisgo.network.results import Results
 from edisgo.network.timeseries import TimeSeries
 
 USER_BASEPATH = os.path.dirname(os.path.dirname(__file__))
-DATA_PATH = r"data"
+DATA_PATH = r"C:\Users\aheider\Documents\Software\Cost-functions\distribution-grid-expansion-cost-functions"
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -150,7 +148,7 @@ def setup_topology_status_quo_ding0(grids_path, grid_id):
     dingo_grid_path = os.path.join(grids_path, str(grid_id))
     edisgo_obj = EDisGo(
         ding0_grid=dingo_grid_path,
-        config_path=os.path.join(DATA_PATH, "data_preparation", "data", "config_data")
+        # config_path=os.path.join(DATA_PATH, "data_preparation", "data", "config_data")
     )
 
     # install 2018 generator capacities
@@ -436,10 +434,21 @@ if __name__ == "__main__":
     rnd = np.random.default_rng(seed=2023)
     # ++ get base grid ++
     grid_id = 1056
+    os.makedirs(os.path.join(save_dir, str(grid_id)), exist_ok=True)
     grids_orig_path = \
         r"C:\Users\aheider\Documents\Grids\ding0_elia_grids"
     edisgo_obj = \
         setup_topology_status_quo_ding0(grids_path=grids_orig_path, grid_id=grid_id)
+    # ++ add VRES ++
+    # todo: how? with egon scaling factors? Only PV in MV/LV and others in overlying grid?
+    edisgo_obj.import_generators(
+        generator_scenario="ego100"
+    )
+    edisgo_obj.set_time_series_active_power_predefined(
+        fluctuating_generators_ts="oedb",
+        dispatchable_generators_ts="full_capacity",
+        conventional_loads_ts="demandlib",
+    )
     # ++ add EVs ++
     # get potential charging sites
     ev_dir = r"C:\Users\aheider\Documents\Grids\{}\dumb\electromobility".format(grid_id)
@@ -457,8 +466,9 @@ if __name__ == "__main__":
         parse_dates=True
     )
     # how many EVs are to be integrated?
-    scaling_factor = 4.88 # 4.88
+    scaling_factor = 0.1 # 4.88
     cp_ids = []
+    mapping = pd.DataFrame(columns=["name_orig", "name_new"])
     for use_case in integrated_charging_parks.use_case.unique():
         cps_tmp = integrated_charging_parks.loc[
             integrated_charging_parks.use_case == use_case]
@@ -484,6 +494,24 @@ if __name__ == "__main__":
                 ts_reactive_power=pd.Series(index=ts_charging_parks.index, data=0.0)
             ) for cp_id, cp in cps_tmp_int.iterrows()]
         cp_ids.append(cp_ids_use_case)
+        # save mapping
+        mapping_tmp = pd.DataFrame(columns=["name_orig", "name_new"])
+        mapping_tmp["name_orig"] = cps_tmp_int.index
+        mapping_tmp["name_new"] = cp_ids_use_case
+        mapping = pd.concat([mapping, mapping_tmp])
+        # load flexibility bands
+        # fb_dir = r"C:\Users\aheider\Documents\Grids\{}".format(grid_id)
+        # if use_case in ["home", "work", "public"]:
+        #     for band in ["upper_power", "upper_energy", "lower_energy"]:
+        #         band_ref = pd.read_csv(
+        #             os.path.join(fb_dir, f"{band}_{use_case}.csv"), index_col=0
+        #         )
+        #         band_new = band_ref[cps_tmp_int.index]
+        #         band_new.columns = cp_ids_use_case
+        #         band_new.to_csv(
+        #             os.path.join(save_dir, f"{band}_{use_case}.csv")
+        #         )
+    mapping.to_csv(os.path.join(save_dir, f"cp_mapping.csv"))
     # ++ add HPs ++
     penetration = 1.0
     scenario_dict = scenario_input_data()
@@ -511,8 +539,7 @@ if __name__ == "__main__":
     ts_reactive.loc[:, :] = 0.0
     edisgo_obj.timeseries.add_component_time_series("loads_reactive_power",
                                                     ts_reactive)
-    # ++ add VRES ++
-    # todo: how? with egon scaling factors? Only PV in MV/LV and others in overlying grid?
+    # check if object is consistent and save
     edisgo_obj.check_integrity()
     edisgo_obj.save(os.path.join(save_dir, str(grid_id)))
     print("Success")
