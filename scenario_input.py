@@ -151,6 +151,9 @@ def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
         demand_ref = kwargs.get("reference_demand", 499299.467829801)
         if demand_ref is not None:
             demand = demand.divide(demand.sum().sum()).multiply(demand_ref)
+    elif demand_data_source == "dg_clustering":
+        demand = pd.read_csv(r"data/demand_dgs_clustering.csv", index_col=0,
+                             parse_dates=True).divide(1000)
     else:
         raise ValueError("Data source for demand not valid.")
     if vres_data_source == "ego":
@@ -177,6 +180,9 @@ def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
             vres["wind"] = vres_scaled["wind"] * (1-share_pv) * sum_energy
     elif vres_data_source == "flat_generation":
         vres = pd.DataFrame(index=timeindex, columns=["gen"], data=1)
+    elif vres_data_source == "dg_clustering":
+        vres = pd.read_csv(r"data/vres_dgs_clustering.csv", index_col=0,
+                           parse_dates=True).divide(1000)
     else:
         raise ValueError("Data source for vres not valid.")
     return {
@@ -188,7 +194,10 @@ def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
         "ts_demand": demand.loc[timeindex],
         "hp_mode": None, "tes_relative_size": 1,
         "ev_mode": None, "flexible_ev_use_cases": [],
-        "ev_extended_flex": False, "ev_v2g": False
+        "ev_extended_flex": False, "ev_v2g": False,
+        "use_binaries": False,
+        "use_linear_penalty": True,
+        "weights_linear_penalty": 0.0001
     }
 
 
@@ -325,26 +334,28 @@ def save_scenario_dict(scenario_dict, res_dir):
         json.dump(scenario_dict, f, ensure_ascii=False, indent=4)
 
 
+def shift_and_extend_ts_by_one_timestep(ts, time_increment="1h", value=0):
+    if isinstance(value, pd.Series):
+        ts_first = pd.DataFrame(
+            columns=[ts.index[0] - pd.to_timedelta(time_increment)],
+            index=value.index,
+            data=value.values).T
+    else:
+        ts_first = pd.Series(
+            index=[ts.index[0] - pd.to_timedelta(time_increment)],
+            data=value)
+    ts = pd.concat([ts_first, ts])
+    ts.index = \
+        ts.index + pd.to_timedelta(time_increment)
+    return ts
+
+
 def adjust_timeseries_data(scenario_dict):
     """
     Method to shift all timeseries by one timestep to make sure storage units end at 0
     :param scenario_dict:
     :return:
     """
-    def shift_and_extend_ts_by_one_timestep(ts, time_increment="1h", value=0):
-        if isinstance(value, pd.Series):
-            ts_first = pd.DataFrame(
-                columns=[ts.index[0] - pd.to_timedelta(time_increment)],
-                index=value.index,
-                data=value.values).T
-        else:
-            ts_first = pd.Series(
-                index=[ts.index[0] - pd.to_timedelta(time_increment)],
-                data=value)
-        ts = pd.concat([ts_first, ts])
-        ts.index = \
-            ts.index + pd.to_timedelta(time_increment)
-        return ts
 
     for key in scenario_dict.keys():
         if key.startswith("ts_"):
