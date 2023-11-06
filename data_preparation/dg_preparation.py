@@ -1,4 +1,5 @@
 import logging
+import networkx as nx
 from numpy.random import choice
 import numpy as np
 import os
@@ -10,9 +11,11 @@ from edisgo import EDisGo
 from edisgo.network.components import Switch
 from edisgo.network.results import Results
 from edisgo.network.timeseries import TimeSeries
+from edisgo.network.topology import Topology
+from edisgo.tools.spatial_complexity_reduction import remove_lines_under_one_meter
 
 USER_BASEPATH = os.path.dirname(os.path.dirname(__file__))
-DATA_PATH = r"C:\Users\aheider\Documents\Software\Cost-functions\distribution-grid-expansion-cost-functions"
+DATA_PATH = r"U:\Software\Cost-functions\distribution-grid-expansion-cost-functions"
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -174,6 +177,7 @@ def setup_topology_status_quo_ding0(grids_path, grid_id):
 
     # remove 1 meter lines
     edisgo_obj = remove_1m_lines_from_edisgo(edisgo_obj)
+    edisgo_obj = remove_lines_under_one_meter(edisgo_obj)
 
     # set up worst case time series
     edisgo_obj.set_time_series_worst_case_analysis()
@@ -201,7 +205,7 @@ def setup_topology_status_quo_ding0(grids_path, grid_id):
 
     # Reinforce with timeseries
     edisgo_obj.reinforce(timesteps_pfa='reduced_analysis')
-    # # Clear results
+    # Clear results
     edisgo_obj.results = Results(edisgo_obj)
 
     logger.debug("Status quo grids ready.")
@@ -428,6 +432,70 @@ def reference_operation(profiles_hp):
     return reference_strategy
 
 
+def get_downstream_nodes_matrix_iterative(grid):
+    """
+    Method that returns matrix M with 0 and 1 entries describing the relation
+    of buses within the network. If bus b is descendant of a (assuming the
+    station is the root of the radial network) M[a,b] = 1, otherwise M[a,b] = 0.
+    The matrix is later used to determine the power flow at the different buses
+    by multiplying with the nodal power flow. S_sum = M * s, where s is the
+    nodal power vector.
+
+    Note: only works for radial networks.
+
+    :param grid: either Topology, MVGrid or LVGrid
+    :return:
+    Todo: Check version with networkx successor
+    """
+
+    def recursive_downstream_node_matrix_filling(
+        current_bus, current_feeder, downstream_node_matrix, grid, visited_buses
+    ):
+        current_feeder.append(current_bus)
+        for neighbor in tree.successors(current_bus):
+            if neighbor not in visited_buses and neighbor not in current_feeder:
+                recursive_downstream_node_matrix_filling(
+                    neighbor,
+                    current_feeder,
+                    downstream_node_matrix,
+                    grid,
+                    visited_buses,
+                )
+        # current_bus = current_feeder.pop()
+        downstream_node_matrix.loc[current_feeder, current_bus] = 1
+        visited_buses.append(current_bus)
+        if len(visited_buses) % 10 == 0:
+            print(
+                "{} % of the buses have been checked".format(
+                    len(visited_buses) / len(buses) * 100
+                )
+            )
+        current_feeder.pop()
+
+    buses = grid.buses_df.index.values
+    if str(type(grid)) == str(Topology):
+        graph = grid.to_graph()
+        slack = grid.mv_grid.station.index[0]
+    else:
+        graph = grid.graph
+        slack = grid.transformers_df.bus1.iloc[0]
+    tree = nx.bfs_tree(graph, slack)
+
+    print("Matrix for {} buses is extracted.".format(len(buses)))
+    downstream_node_matrix = pd.DataFrame(columns=buses, index=buses)
+    downstream_node_matrix.fillna(0, inplace=True)
+
+    print("Starting iteration.")
+    visited_buses = []
+    current_feeder = []
+
+    recursive_downstream_node_matrix_filling(
+        slack, current_feeder, downstream_node_matrix, grid, visited_buses
+    )
+
+    return downstream_node_matrix
+
+
 if __name__ == "__main__":
     save_dir = r"H:\Grids_SE"
     seed = 2023
@@ -436,7 +504,7 @@ if __name__ == "__main__":
     grid_id = 1056
     os.makedirs(os.path.join(save_dir, str(grid_id)), exist_ok=True)
     grids_orig_path = \
-        r"C:\Users\aheider\Documents\Grids\ding0_elia_grids"
+        r"H:\ding0_elia_grids"
     edisgo_obj = \
         setup_topology_status_quo_ding0(grids_path=grids_orig_path, grid_id=grid_id)
     # ++ add VRES ++
@@ -449,24 +517,25 @@ if __name__ == "__main__":
         dispatchable_generators_ts="full_capacity",
         conventional_loads_ts="demandlib",
     )
+    # edisgo_obj.set_time_series_reactive_power_control()
     # ++ add EVs ++
     # get potential charging sites
-    ev_dir = r"C:\Users\aheider\Documents\Grids\{}\dumb\electromobility".format(grid_id)
+    ev_dir = r"H:\Grids\{}\dumb\electromobility".format(grid_id)
     potential_charging_points = pd.read_csv(
         os.path.join(ev_dir, "grid_connections.csv"), index_col=0)
     # get added cps from previous project (to get p_set)
-    cp_dir = r"C:\Users\aheider\Documents\Grids\{}\dumb\topology".format(grid_id)
+    cp_dir = r"H:\Grids_SE\{}".format(grid_id)
     integrated_charging_parks = pd.read_csv(
         os.path.join(cp_dir, "charging_points.csv"), index_col=0
     )
     # get charging time series and flexibility bands of previous project
-    ts_dir = r"C:\Users\aheider\Documents\Grids\{}\dumb\timeseries".format(grid_id)
+    ts_dir = r"H:\Grids_SE\{}".format(grid_id)
     ts_charging_parks = pd.read_csv(
         os.path.join(ts_dir, "charging_points_active_power.csv"), index_col=0,
         parse_dates=True
     )
     # how many EVs are to be integrated?
-    scaling_factor = 0.1 # 4.88
+    scaling_factor = 4.88 # 4.88
     cp_ids = []
     mapping = pd.DataFrame(columns=["name_orig", "name_new"])
     for use_case in integrated_charging_parks.use_case.unique():
@@ -489,9 +558,9 @@ if __name__ == "__main__":
                 geolocation=cp.geom,
                 p_set=max(cp.p_nom, ts_charging_parks[cp_id].max()),
                 sector=use_case,
-                add_ts=True,
-                ts_active_power=ts_charging_parks[cp_id],
-                ts_reactive_power=pd.Series(index=ts_charging_parks.index, data=0.0)
+                add_ts=False,
+                # ts_active_power=ts_charging_parks[cp_id],
+                # ts_reactive_power=pd.Series(index=ts_charging_parks.index, data=0.0)
             ) for cp_id, cp in cps_tmp_int.iterrows()]
         cp_ids.append(cp_ids_use_case)
         # save mapping
@@ -511,7 +580,7 @@ if __name__ == "__main__":
         #         band_new.to_csv(
         #             os.path.join(save_dir, f"{band}_{use_case}.csv")
         #         )
-    mapping.to_csv(os.path.join(save_dir, f"cp_mapping.csv"))
+    mapping.to_csv(os.path.join(save_dir, str(grid_id), f"cp_mapping.csv"))
     # ++ add HPs ++
     penetration = 1.0
     scenario_dict = scenario_input_data()
@@ -529,17 +598,10 @@ if __name__ == "__main__":
     )
     logger.info(f"Number of loads after adding residential HPs: "
                 f"{len(edisgo_obj.topology.loads_df)}.")
-    reference_operation = reference_operation(hp_profiles)
-    edisgo_obj.timeseries.predefined_conventional_loads_by_sector(
-        edisgo_object=edisgo_obj,
-        ts_loads=reference_operation,
-        load_names=heat_pumps
-    )
-    ts_reactive = edisgo_obj.timeseries.loads_active_power[heat_pumps]
-    ts_reactive.loc[:, :] = 0.0
-    edisgo_obj.timeseries.add_component_time_series("loads_reactive_power",
-                                                    ts_reactive)
-    # check if object is consistent and save
-    edisgo_obj.check_integrity()
-    edisgo_obj.save(os.path.join(save_dir, str(grid_id)))
+    # remove 1-meter lines
+    edisgo_obj = remove_1m_lines_from_edisgo(edisgo_obj)
+    # check if object is consistent and save - no check as time series are missing
+    # edisgo_obj.check_integrity()
+    edisgo_obj.save(os.path.join(save_dir, str(grid_id)),
+                    save_heatpump=True)
     print("Success")
