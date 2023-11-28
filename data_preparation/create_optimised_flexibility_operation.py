@@ -289,7 +289,7 @@ def setup_edisgo_object(save_dir, grid_id, ev_dir, grid_orig, orig_dir,
     edisgo_obj.electromobility.check_integrity()
     if ev_operation == "reference":
         pass
-    elif ev_operation == "optimised":
+    if ev_operation == "optimised":
         ev_charging_opt = pd.read_csv(os.path.join(opt_dir, "charging_ev.csv"),
                                       index_col=0, parse_dates=True)
         ts_cps_grid.update(ev_charging_opt)
