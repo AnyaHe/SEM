@@ -1,14 +1,15 @@
 import pandas as pd
 import pyomo.environ as pm
 
-
+from storage_equivalent.bess_model import add_battery_storage_model_optimal_cells
 from storage_equivalent.ev_model import add_evs_model_cells
 from storage_equivalent.heat_pump_model import add_heat_pump_model_cells
 from storage_equivalent.storage_equivalent_model import get_power_flexible_technologies
 
 
 def add_dg_model(model, dg_names, grid_powers,
-                 flexible_evs=True, flexible_hps=True, **kwargs):
+                 flexible_evs=True, flexible_hps=True,
+                 flexible_bess=False, **kwargs):
     """
     Adds distribution grids to existing model. It can be defined whether electric
     vehicles and heat pumps should be included.
@@ -45,14 +46,14 @@ def add_dg_model(model, dg_names, grid_powers,
         -------
 
         """
-        ev, hp_el = get_power_flexible_technologies(model, time, [cell])
+        ev, hp_el, bess = get_power_flexible_technologies(model, time, [cell])
         if isinstance(model.grid_powers["upper_power"], pd.Series):
             upper_power_grid_flex = model.grid_powers["upper_power"][cell]
         elif isinstance(model.grid_powers["upper_power"], pd.DataFrame):
             upper_power_grid_flex = model.grid_powers["upper_power"].iloc[time][cell]
         else:
             raise ValueError("Unexpected type of upper power grid.")
-        return ev + hp_el <= upper_power_grid_flex
+        return ev + hp_el + bess <= upper_power_grid_flex
 
     def grid_lower(model, cell, time):
         """
@@ -69,14 +70,14 @@ def add_dg_model(model, dg_names, grid_powers,
         -------
 
         """
-        ev, hp_el = get_power_flexible_technologies(model, time, [cell])
+        ev, hp_el, bess = get_power_flexible_technologies(model, time, [cell])
         if isinstance(model.grid_powers["lower_power"], pd.Series):
             lower_power_grid_flex = model.grid_powers["lower_power"][cell]
         elif isinstance(model.grid_powers["lower_power"], pd.DataFrame):
             lower_power_grid_flex = model.grid_powers["lower_power"].iloc[time][cell]
         else:
             raise ValueError("Unexpected type of lower power grid.")
-        return ev + hp_el >= lower_power_grid_flex
+        return ev + hp_el + bess >= lower_power_grid_flex
     # add new set with dgs
     model.cells_set = pm.Set(initialize=dg_names)
     # add ev model if flexible
@@ -105,6 +106,12 @@ def add_dg_model(model, dg_names, grid_powers,
             use_binaries=kwargs.get("use_binaries"),
             use_linear_penalty=kwargs.get("use_linear_penalty"),
             weight_hp=kwargs.get("weight_hp")
+        )
+    # add bess model if exist
+    if flexible_bess:
+        model = add_battery_storage_model_optimal_cells(
+            model=model,
+            storage_units=kwargs.get("storage_units")
         )
     # add grid constraints
     model.grid_powers = grid_powers

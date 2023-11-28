@@ -188,10 +188,11 @@ def load_ev_data_dg(grid_dir, dg_name):
         # aggregate bands per charging use case
         band_tmp = pd.DataFrame()
         flexible_charging_points = charging_points.loc[flexibility_bands[band].columns]
-        flexible_use_cases = flexible_charging_points["sector"].unique()
+        flexible_use_cases = list(flexible_charging_points["sector"].unique())
         for use_case in flexible_use_cases:
-            band_tmp[f"{dg_name}_{use_case}"] = flexibility_bands[band][flexible_charging_points.loc[
-                flexible_charging_points.sector == use_case].index].sum(axis=1)
+            band_tmp[f"{dg_name}_{use_case}"] = \
+                flexibility_bands[band][flexible_charging_points.loc[
+                    flexible_charging_points.sector == use_case].index].sum(axis=1)
         flexibility_bands[band] = band_tmp
     # get reference charging
     reference_charging = pd.DataFrame()
@@ -204,7 +205,15 @@ def load_ev_data_dg(grid_dir, dg_name):
          flexibility_bands["upper_energy"].sum(axis=1)[0] +
          flexibility_bands["lower_energy"].sum(axis=1)[-1] -
          flexibility_bands["lower_energy"].sum(axis=1)[0]) / 0.9 / 2
-    return flexibility_bands, energy_ev, reference_charging, nr_evs, list(flexible_use_cases)
+    return flexibility_bands, energy_ev, reference_charging, nr_evs, flexible_use_cases
+
+
+def load_bess_data_df(grid_dir, dg_name):
+    bess = pd.read_csv(os.path.join(grid_dir, "topology", "storage_units.csv"),
+                       index_col=0)
+    bess_dg = pd.DataFrame(columns=["capacity", "p_nom"], index=[dg_name])
+    bess_dg.loc[dg_name] = bess[["capacity", "p_nom"]].sum()
+    return bess_dg
 
 
 def load_inflexible_load_and_vres_dgs(grid_dir, scenario_dict, vres_mode="local"):
@@ -256,9 +265,17 @@ def load_inflexible_load_and_vres_dgs(grid_dir, scenario_dict, vres_mode="local"
 if __name__ == "__main__":
     solver = "gurobi"
     varied_parameter = "dg_reinforcement"
-    v_res_mode = "local"
+    v_res_mode = "global"
+    include_bess = True
+    grid_id = 1056
+    feeder_id = 8
+    if include_bess:
+        path = r"H:\Grids_SE_storage\{}\feeder\{}".format(grid_id, feeder_id)
+        orig_dir = r"H:\Grids_SE"  # r"H:\Grids_SE_storage"
+    else:
+        path = r"H:\Grids_SE\{}\feeder\{}".format(grid_id, feeder_id)
+        orig_dir = r"H:\Grids_SE"
     # information for data on grid constraints
-    path = r"H:\Grids_SE\1056\feeder\8"
     tail = "grid_power_bands.csv"
     variations = ["full_flex", "minimum_reinforcement"] # [1.0, 0.5, 0.2, 0.1, 0.05, 0.0]
     extract_storage_duration = False
@@ -270,7 +287,12 @@ if __name__ == "__main__":
         # try:
         print(f"Start solving scenario {scenario}")
         # create results directory
-        res_dir = os.path.join(f"results/se2_single_dgs_global_vres/{scenario}")
+        if include_bess:
+            res_dir = os.path.join(
+                f"results/se2_single_dgs_storage_{v_res_mode}_vres/{scenario}")
+        else:
+            res_dir = os.path.join(
+                f"results/se2_single_dgs_{v_res_mode}_vres/{scenario}")
         os.makedirs(res_dir, exist_ok=True)
         # if os.path.isfile(os.path.join(res_dir, "storage_equivalents.csv")):
         #     print(f"Scenario {scenario} already solved. Skipping scenario.")
@@ -304,7 +326,14 @@ if __name__ == "__main__":
         )
         scenario_dict["efficiency_static_tes"] = 0.99
         scenario_dict["efficiency_dynamic_tes"] = 0.95
-        # Todo: add BESS
+        # Load bess data
+        if include_bess:
+            bess_data = load_bess_data_df(
+                grid_dir=f"{path}/minimum_reinforcement",
+                dg_name=dg_names[0]
+            )
+        else:
+            bess_data = pd.DataFrame()
         # shift timeseries
         scenario_dict = adjust_timeseries_data(scenario_dict)
         # initialise result
@@ -358,6 +387,7 @@ if __name__ == "__main__":
                     grid_powers=dg_constraints,
                     flexible_evs=flexible_evs,
                     flexible_hps=flexible_hps,
+                    flexible_bess=include_bess,
                     flex_use_cases=scenario_dict["use_cases_flexible"],
                     flex_bands=scenario_dict["ts_flex_bands"],
                     v2g=scenario_dict["ev_v2g"],
@@ -370,6 +400,7 @@ if __name__ == "__main__":
                     heat_demand=scenario_dict["ts_heat_demand"],
                     efficiency_static_tes=scenario_dict["efficiency_static_tes"],
                     efficiency_dynamic_tes=scenario_dict["efficiency_dynamic_tes"],
+                    storage_units=bess_data,
                     use_linear_penalty=scenario_dict["use_linear_penalty"],
                     weight_ev=scenario_dict["weights_linear_penalty"],
                     weight_hp=scenario_dict["weights_linear_penalty"]

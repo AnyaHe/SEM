@@ -169,8 +169,9 @@ def add_heat_pump_model_cells(
     """
 
     def energy_conversion_hp(model, cell, time):
-        return model.charging_hp_el[cell, time] * cop.loc[model.timeindex[time]] == \
-            model.charging_hp_th[cell, time]
+        return model.charging_hp_el[cell, time] * \
+               cop.loc[model.timeindex[time], cell] == \
+               model.charging_hp_th[cell, time]
 
     def energy_balance_hp_tes(model, cell, time):
         if model.use_binaries_hp:
