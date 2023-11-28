@@ -340,15 +340,33 @@ def get_slacks(model):
     # extract slack for simultaneous charging and discharging evs
     if hasattr(model, "discharging_ev") and not model.use_binaries_ev:
         if model.use_linear_penalty_ev:
-            slack_ev = sum(
-                model.charging_ev[cp, time] + model.discharging_ev[cp, time]
-                for cp in model.charging_points_set for time in model.time_set
-            ) / model.weight_slacks * model.weight_ev
+            if hasattr(model, "cells_set"):
+                slack_ev = sum(
+                    model.charging_ev[cp, cell, time] +
+                    model.discharging_ev[cp, cell, time]
+                    for cp in model.charging_points_set
+                    for cell in model.cells_set
+                    for time in model.time_set
+                ) / model.weight_slacks * model.weight_ev
+            else:
+                slack_ev = sum(
+                    model.charging_ev[cp, time] + model.discharging_ev[cp, time]
+                    for cp in model.charging_points_set for time in model.time_set
+                ) / model.weight_slacks * model.weight_ev
         else:
-            slack_ev = sum(
-                model.charging_ev[cp, time]*model.discharging_ev[cp, time]
-                for cp in model.charging_points_set for time in model.time_set
-            )
+            if hasattr(model, "cells_set"):
+                slack_ev = sum(
+                    model.charging_ev[cp, cell, time] *
+                    model.discharging_ev[cp, cell, time]
+                    for cp in model.charging_points_set
+                    for cell in model.cells_set
+                    for time in model.time_set
+                )
+            else:
+                slack_ev = sum(
+                    model.charging_ev[cp, time]*model.discharging_ev[cp, time]
+                    for cp in model.charging_points_set for time in model.time_set
+                )
     else:
         slack_ev = 0
     # extract shedding ev if dg constraints are present
@@ -362,15 +380,27 @@ def get_slacks(model):
     # extract slack for simultaneous charging and discharging tes
     if hasattr(model, "discharging_tes") and not model.use_binaries_hp:
         if model.use_linear_penalty_tes:
-            slack_tes = sum(
-                model.charging_tes[time] + model.discharging_tes[time]
-                for time in model.time_set
+            if hasattr(model, "cells_set"):
+                slack_tes = sum(
+                model.charging_tes[cell, time] + model.discharging_tes[cell, time]
+                for cell in model.cells_set for time in model.time_set
             ) / model.weight_slacks * model.weight_hp
+            else:
+                slack_tes = sum(
+                    model.charging_tes[time] + model.discharging_tes[time]
+                    for time in model.time_set
+                ) / model.weight_slacks * model.weight_hp
         else:
-            slack_tes = sum(
-                model.charging_tes[time]*model.discharging_tes[time]
-                for time in model.time_set
-            )
+            if hasattr(model, "cells_set"):
+                slack_tes = sum(
+                    model.charging_tes[cell, time]*model.discharging_tes[cell, time]
+                    for cell in model.cells_set for time in model.time_set
+                )
+            else:
+                slack_tes = sum(
+                    model.charging_tes[time]*model.discharging_tes[time]
+                    for time in model.time_set
+                )
     else:
         slack_tes = 0
         # extract shedding ev if dg constraints are present
@@ -491,7 +521,8 @@ def solve_model(model, solver, hp_mode=None, ev_mode=None, ev_v2g=False,
         discharging_ev = pd.Series(model.discharging_ev.extract_values()).unstack().T
         if model.use_binaries_ev:
             y_charge_ev = pd.Series(model.y_charge_ev.extract_values()).unstack().T
-            y_discharge_ev = pd.Series(model.y_discharge_ev.extract_values()).unstack().T
+            y_discharge_ev = \
+                pd.Series(model.y_discharge_ev.extract_values()).unstack().T
             prefactor = y_charge_ev.multiply(y_discharge_ev)
         else:
             prefactor = 1
@@ -568,7 +599,9 @@ def get_balanced_storage_equivalent_model(scenario_dict, max_iter=3, tol=1e-2,
                 heat_demand=kwargs["ts_heat_demand"],
                 efficiency_static_tes=scenario_dict["efficiency_static_tes"],
                 efficiency_dynamic_tes=scenario_dict["efficiency_dynamic_tes"],
-                use_binaries=scenario_dict["hp_use_binaries"]
+                use_binaries=scenario_dict["hp_use_binaries"],
+                use_linear_penalty=scenario_dict["use_linear_penalty"],
+                weight_hp=scenario_dict["weights_linear_penalty"]
             )
         # add ev model if flexible
         if scenario_dict["ev_mode"] == "flexible":
@@ -578,7 +611,9 @@ def get_balanced_storage_equivalent_model(scenario_dict, max_iter=3, tol=1e-2,
                 v2g=scenario_dict["ev_v2g"],
                 efficiency=scenario_dict["ev_charging_efficiency"],
                 discharging_efficiency=scenario_dict["ev_discharging_efficiency"],
-                use_binaries=scenario_dict["ev_use_binaries"]
+                use_binaries=scenario_dict["ev_use_binaries"],
+                use_linear_penalty=scenario_dict["use_linear_penalty"],
+                weight_ev=scenario_dict["weights_linear_penalty"]
             )
         # add storage equivalents
         model = add_storage_equivalent_model(
