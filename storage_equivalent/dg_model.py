@@ -75,7 +75,7 @@ def add_dg_model(model, dg_names, grid_powers,
         elif isinstance(model.grid_powers["lower_power"], pd.DataFrame):
             lower_power_grid_flex = model.grid_powers["lower_power"].iloc[time][cell]
         else:
-            raise ValueError("Unexpected type of upper power grid.")
+            raise ValueError("Unexpected type of lower power grid.")
         return ev + hp_el >= lower_power_grid_flex
     # add new set with dgs
     model.cells_set = pm.Set(initialize=dg_names)
@@ -88,7 +88,9 @@ def add_dg_model(model, dg_names, grid_powers,
             efficiency=kwargs.get("efficiency"),
             v2g=kwargs.get("v2g"),
             discharging_efficiency=kwargs.get("discharging_efficiency"),
-            use_binaries=kwargs.get("use_binaries") and kwargs.get("v2g")
+            use_binaries=kwargs.get("use_binaries") and kwargs.get("v2g"),
+            use_linear_penalty=kwargs.get("use_linear_penalty"),
+            weight_ev=kwargs.get("weight_ev")
         )
     # add hp model if flexible
     if flexible_hps:
@@ -100,7 +102,9 @@ def add_dg_model(model, dg_names, grid_powers,
             heat_demand=kwargs.get("heat_demand"),
             efficiency_static_tes=kwargs.get("efficiency_static_tes"),
             efficiency_dynamic_tes=kwargs.get("efficiency_dynamic_tes"),
-            use_binaries=kwargs.get("use_binaries")
+            use_binaries=kwargs.get("use_binaries"),
+            use_linear_penalty=kwargs.get("use_linear_penalty"),
+            weight_hp=kwargs.get("weight_hp")
         )
     # add grid constraints
     model.grid_powers = grid_powers
