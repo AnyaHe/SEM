@@ -104,7 +104,15 @@ def get_power_flexible_technologies(model, time, cells=None):
         ev = charging_ev - shed_ev - discharging_ev
     else:
         ev = 0
-    return ev, hp_el
+    if hasattr(model, "charging_bess"):
+        if cells is not None:
+            bess = \
+                sum(model.charging_bess[cell, time] for cell in cells)
+        else:
+            bess = model.charging_bess[time]
+    else:
+        bess = 0
+    return ev, hp_el, bess
 
 
 def add_storage_equivalent_model(model, residual_load, **kwargs):
@@ -125,11 +133,11 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
             cells = model.cells_set
         else:
             cells = None
-        ev, hp_el = get_power_flexible_technologies(model, time, cells)
+        ev, hp_el, bess = get_power_flexible_technologies(model, time, cells)
         return sum(model.charging[time_horizon, time] for time_horizon in
                    model.time_horizons_set) + \
-               model.residual_load.iloc[time] + hp_el + ev - model.shedding[time] + \
-               model.spilling[time] == 0
+               model.residual_load.iloc[time] + hp_el + ev + bess - \
+               model.shedding[time] + model.spilling[time] == 0
 
     def maximum_charging(model, time_horizon, time):
         return model.charging_max[time_horizon] >= model.charging[time_horizon, time]
@@ -410,8 +418,15 @@ def get_slacks(model):
              for cell in model.cells_set for time in model.time_set])
     else:
         shed_hp = 0
-    return sum(model.spilling[time] + model.shedding[time]
-               for time in model.time_set) + slack_ev + slack_tes + shed_ev + shed_hp
+    if hasattr(model, "spilling"):
+        spill = sum(model.spilling[time] for time in model.time_set)
+    else:
+        spill = 0
+    if hasattr(model, "shedding"):
+        shed = sum(model.shedding[time] for time in model.time_set)
+    else:
+        shed = 0
+    return spill + shed + slack_ev + slack_tes + shed_ev + shed_hp
 
 
 def minimize_cap(model):
@@ -540,9 +555,12 @@ def solve_model(model, solver, hp_mode=None, ev_mode=None, ev_v2g=False,
             raise ValueError("Simultaneous charging and discharging of TES. "
                              "Please check.")
     # extract results
-    slacks = pd.Series(model.spilling.extract_values()) + \
-             pd.Series(model.shedding.extract_values())
-    if slacks.sum() > 1e-9:
+    if hasattr(model, "spilling"):
+        slacks = (pd.Series(model.spilling.extract_values()) +
+                  pd.Series(model.shedding.extract_values())).sum()
+    else:
+        slacks = 0
+    if slacks > 1e-9:
         if allow_spill_and_shed:
             print(f"Info: {pd.Series(model.spilling.extract_values())} of spilling and "
                   f"{pd.Series(model.shedding.extract_values())} of shedding are being "

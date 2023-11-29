@@ -4,12 +4,11 @@ import pyomo.environ as pm
 import numpy as np
 
 from scenario_input import base_scenario, scenario_variation_distribution_grids, \
-    scenario_input_hps, scenario_input_evs, adjust_timeseries_data, \
+    adjust_timeseries_data, \
     get_new_residual_load, save_scenario_dict, shift_and_extend_ts_by_one_timestep
 from storage_equivalent import storage_equivalent_model as se
 from storage_equivalent.dg_model import add_dg_model
-from storage_equivalent.heat_pump_model import model_input_hps
-from storage_equivalent.ev_model import model_input_evs
+from storage_equivalent import price_model as pr
 
 
 def get_connection_matrix_of_dgs(dgs):
@@ -265,10 +264,11 @@ def load_inflexible_load_and_vres_dgs(grid_dir, scenario_dict, vres_mode="local"
 if __name__ == "__main__":
     solver = "gurobi"
     varied_parameter = "dg_reinforcement"
-    v_res_mode = "global"
-    include_bess = True
+    v_res_mode = "local"
+    include_bess = False
     grid_id = 1056
     feeder_id = 8
+    mode = "prices" # "storage_equivalent" or "price"
     if include_bess:
         path = r"H:\Grids_SE_storage\{}\feeder\{}".format(grid_id, feeder_id)
         orig_dir = r"H:\Grids_SE"  # r"H:\Grids_SE_storage"
@@ -289,10 +289,10 @@ if __name__ == "__main__":
         # create results directory
         if include_bess:
             res_dir = os.path.join(
-                f"results/se2_single_dgs_storage_{v_res_mode}_vres/{scenario}")
+                f"results/se2_single_dgs_storage_{mode}_{v_res_mode}_vres/{scenario}")
         else:
             res_dir = os.path.join(
-                f"results/se2_single_dgs_{v_res_mode}_vres/{scenario}")
+                f"results/se2_single_dgs_{mode}_{v_res_mode}_vres/{scenario}")
         os.makedirs(res_dir, exist_ok=True)
         # if os.path.isfile(os.path.join(res_dir, "storage_equivalents.csv")):
         #     print(f"Scenario {scenario} already solved. Skipping scenario.")
@@ -342,15 +342,24 @@ if __name__ == "__main__":
         storage_durations = pd.DataFrame()
         energy_consumed = pd.DataFrame()
         shedding_dg = pd.DataFrame(columns=["shed_ev", "shed_hp"])
-
-        new_res_load = get_new_residual_load(
-            scenario_dict=scenario_dict,
-            sum_energy_heat=scenario_dict["ts_heat_demand"].divide(
-                scenario_dict["ts_cop"]).sum().sum(),
-            energy_ev=energy_ev,
-            ref_charging=scenario_dict["ts_ref_charging"],
-            ts_heat_el=scenario_dict["ts_heat_demand"].divide(scenario_dict["ts_cop"]),
-        )
+        if mode == "storage_equivalent":
+            new_res_load = get_new_residual_load(
+                scenario_dict=scenario_dict,
+                sum_energy_heat=scenario_dict["ts_heat_demand"].divide(
+                    scenario_dict["ts_cop"]).sum().sum(),
+                energy_ev=energy_ev,
+                ref_charging=scenario_dict["ts_ref_charging"],
+                ts_heat_el=scenario_dict["ts_heat_demand"].divide(scenario_dict["ts_cop"]),
+            )
+        elif mode == "prices":
+            # Todo: handle inflexible hps
+            new_res_load = \
+                (scenario_dict["ts_demand"].sum(axis=1) +
+                 scenario_dict["ts_ref_charging"].sum(axis=1) -
+                 scenario_dict["ts_vres"].sum(axis=1))[scenario_dict["ts_timesteps"]]
+            scenario_dict["objective"] = "minimize_costs"
+        else:
+            raise NotImplementedError
         # iterate through reinforcement scenarios
         for val in variations:
             if isinstance(val, pd.Series):
@@ -405,13 +414,23 @@ if __name__ == "__main__":
                     weight_ev=scenario_dict["weights_linear_penalty"],
                     weight_hp=scenario_dict["weights_linear_penalty"]
                 )
-                model = se.add_storage_equivalent_model(
-                    model, new_res_load, time_horizons=scenario_dict["time_horizons"])
-                # define objective
-
-                model.objective = pm.Objective(rule=getattr(se, scenario_dict["objective"]),
-                                               sense=pm.minimize,
-                                               doc='Define objective function')
+                if mode == "storage_equivalent":
+                    model = se.add_storage_equivalent_model(
+                        model, new_res_load, time_horizons=scenario_dict["time_horizons"])
+                    # define objective
+                    model.objective = pm.Objective(rule=getattr(se, scenario_dict["objective"]),
+                                                   sense=pm.minimize,
+                                                   doc='Define objective function')
+                elif mode == "prices":
+                    model = pr.add_price_model(
+                        model, new_res_load,
+                        price_path=r"C:\Users\aheider\Documents\Software\project_Ade\IndustrialDSMFinland\prices.csv"
+                    )
+                    # define objective
+                    model.objective = pm.Objective(
+                        rule=getattr(pr, scenario_dict["objective"]),
+                        sense=pm.minimize,
+                        doc='Define objective function')
                 for iter_i in range(nr_iterations):
 
                     print(f"Info: Starting iteration {iter_i} solving final model.")
@@ -431,21 +450,30 @@ if __name__ == "__main__":
                         ev_mode=scenario_dict["ev_mode"],
                     )
                     # extract results
-                    charging = pd.Series(
-                        model_tmp.charging.extract_values()).unstack().T.set_index(
-                        new_res_load.index)
-                    if extract_storage_duration:
-                        storage_durations = pd.concat([storage_durations,
-                                                       se.determine_storage_durations(
-                                                           charging, val_id)])
-                    energy_levels = \
-                        pd.Series(
-                            model_tmp.energy_levels.extract_values()).unstack().T.set_index(
+                    if mode == "storage_equivalent":
+                        charging = pd.Series(
+                            model_tmp.charging.extract_values()).unstack().T.set_index(
                             new_res_load.index)
-                    discharging = pd.Series(model_tmp.discharging.extract_values()).unstack()
-                    df_tmp = (discharging.sum(axis=1)).reset_index().rename(
-                        columns={"index": "storage_type", 0: "energy_stored"})
-                    df_tmp[varied_parameter] = val_id
+                        if extract_storage_duration:
+                            storage_durations = pd.concat([storage_durations,
+                                                           se.determine_storage_durations(
+                                                               charging, val_id)])
+                        energy_levels = \
+                            pd.Series(
+                                model_tmp.energy_levels.extract_values()).unstack().T.set_index(
+                                new_res_load.index)
+                        discharging = pd.Series(model_tmp.discharging.extract_values()).unstack()
+                        df_tmp = (discharging.sum(axis=1)).reset_index().rename(
+                            columns={"index": "storage_type", 0: "energy_stored"})
+                        df_tmp[varied_parameter] = val_id
+                    else:
+                        if scenario_dict["objective"] == "minimize_costs":
+                            costs = pd.Series(model.grid_exchange.extract_values()).multiply(model.prices.values).sum()
+                            df_tmp = pd.Series({"costs": costs, varied_parameter: val_id})
+                        else:
+                            objective = pd.Series(model.grid_exchange.extract_values())**2
+                            df_tmp = pd.Series(
+                                {"objective": objective.sum(), varied_parameter: val_id})
                     # extract energy values hps
                     if scenario_dict["hp_mode"] == "flexible":
                         sum_energy_heat_tmp = pd.Series(
@@ -471,8 +499,12 @@ if __name__ == "__main__":
                                                  data=[energy_ev_tmp, sum_energy_heat_tmp,
                                                        val_id]).T
                     if iter_i == 0:
-                        charging.to_csv(f"{res_dir}/charging_{val_id}.csv")
-                        energy_levels.to_csv(f"{res_dir}/energy_levels_{val_id}.csv")
+                        if mode == "storage_equivalent":
+                            charging.to_csv(f"{res_dir}/charging_{val_id}.csv")
+                            energy_levels.to_csv(f"{res_dir}/energy_levels_{val_id}.csv")
+                        else:
+                            pd.Series(model.grid_exchange.extract_values()).to_csv(
+                                f"{res_dir}/grid_exchange_{val_id}.csv")
                         # save flexible hp operation
                         if scenario_dict["hp_mode"] == "flexible":
                             hp_operation = pd.Series(model_tmp.charging_hp_el.extract_values())
@@ -533,7 +565,7 @@ if __name__ == "__main__":
             #           f"Skipping.")
             #     print(e)
 
-        shifted_energy_df.to_csv(f"{res_dir}/storage_equivalents.csv")
+        shifted_energy_df.to_csv(f"{res_dir}/{mode}.csv")
         shifted_energy_rel_df.to_csv(
             f"{res_dir}/storage_equivalents_relative.csv")
         shedding_dg.to_csv(
