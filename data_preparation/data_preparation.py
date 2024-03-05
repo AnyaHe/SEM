@@ -23,6 +23,9 @@ def get_heat_pump_timeseries_data(data_dir, scenario_dict):
     profiles_hp = pd.read_csv(hp_path, sep=';', decimal=",", index_col=0,
                               parse_dates=True)
     timesteps = scenario_dict["ts_timesteps"]
+    profiles_hp = profiles_hp.loc[profiles_hp.index.year.isin(timesteps.year.unique())]
+    profiles_hp.index = \
+        pd.date_range(start=profiles_hp.index[0], freq="1h", periods=len(profiles_hp))
     profiles_hp = profiles_hp.loc[timesteps.tz_localize("UTC")]
     # calculate heat_demand and set right timeindex
     heat_demand = sum([
