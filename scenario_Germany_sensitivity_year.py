@@ -41,7 +41,7 @@ if __name__ == "__main__":
     if ev_extended_flex:
         flexible_ev_use_cases = ["home", "work", "public"]
     # create results directory
-    res_dir = os.path.join(f"results/two_weeks/{scenario}")
+    res_dir = os.path.join(f"results/two_weeks_weight_one/{scenario}")
     os.makedirs(res_dir, exist_ok=True)
     # initialize results
     shifted_energy_df = pd.DataFrame()
@@ -50,10 +50,10 @@ if __name__ == "__main__":
     # load scenario values
     for data_source in years_dict.keys():
         for year in years_dict[data_source]:
-            if mode == "generatio":
-                scenario_dict = base_scenario(vres_data_source=data_source, year=year)
+            if mode == "generation":
+                scenario_dict = base_scenario(vres_data_source=data_source, year=year, share_pv=None)
             elif mode == "demand":
-                scenario_dict = base_scenario(demand_data_source=data_source, year=year)
+                scenario_dict = base_scenario(demand_data_source=data_source, year=year, reference_demand=None)
             else:
                 raise ValueError("Mode not defined")
             scenario_dict["hp_mode"] = hp_mode
@@ -92,7 +92,7 @@ if __name__ == "__main__":
             if ev_mode == "flexible":
                 add_evs_model(model, flexibility_bands)
             model = add_storage_equivalent_model(model, new_res_load,
-                                                 time_horizons=[24, 7 * 24, 24 * 366])
+                                                 time_horizons=scenario_dict["time_horizons"])
             model.objective = pm.Objective(rule=minimize_energy,
                                            sense=pm.minimize,
                                            doc='Define objective function')
@@ -116,8 +116,8 @@ if __name__ == "__main__":
                 energy_levels = \
                     pd.Series(model_tmp.energy_levels.extract_values()).unstack().T.set_index(
                         new_res_load.index)
-                abs_charging = pd.Series(model_tmp.abs_charging.extract_values()).unstack()
-                df_tmp = (abs_charging.sum(axis=1) / 2).reset_index().rename(
+                discharging = pd.Series(model_tmp.discharging.extract_values()).unstack()
+                df_tmp = (discharging.sum(axis=1)).reset_index().rename(
                     columns={"index": "storage_type", 0: "energy_stored"})
                 df_tmp["data_source"] = data_source
                 df_tmp["year"] = year

@@ -24,7 +24,7 @@ if __name__ == "__main__":
     if ev_extended_flex:
         flexible_ev_use_cases = ["home", "work", "public"]
     # create results directory
-    res_dir = os.path.join(f"results/two_weeks/{scenario}")
+    res_dir = os.path.join(f"results/two_weeks_weight_one/{scenario}")
     os.makedirs(res_dir, exist_ok=True)
     # load scenario values
     scenario_dict = base_scenario()
@@ -89,8 +89,8 @@ if __name__ == "__main__":
             model.caps_neg.extract_values())
         caps_neg = pd.Series(model.caps_neg.extract_values())
         relative_energy_levels = (energy_levels.T + caps_neg).divide(caps)
-        abs_charging = pd.Series(model.abs_charging.extract_values()).unstack()
-        df_tmp = (abs_charging.sum(axis=1) / 2).reset_index().rename(
+        discharging = pd.Series(model.discharging.extract_values()).unstack()
+        df_tmp = (discharging.sum(axis=1)).reset_index().rename(
             columns={"index": "storage_type", 0: "energy_stored"})
         df_tmp["relative_weight"] = relative_weighting
         shifted_energy_df = shifted_energy_df.append(df_tmp, ignore_index=True)

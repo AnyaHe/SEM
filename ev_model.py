@@ -6,7 +6,8 @@ import os
 from data_preparation.data_preparation import determine_shifting_times_ev
 
 
-def add_ev_model(model, flex_bands, efficiency=0.9):
+def add_ev_model(model, flex_bands, charging_efficiency=0.9, v2g=False,
+                 discharging_efficiency=0.9):
     def charging_ev(model, time):
         """
         Constraint for charging of EV that has to ly between the lower and upper
@@ -17,16 +18,24 @@ def add_ev_model(model, flex_bands, efficiency=0.9):
         :param time:
         :return:
         """
+        # get previous energy level
         if time == 0:
             energy_level_pre = \
                 (model.flex_bands.loc[time, "lower"] +
                  model.flex_bands.loc[time, "upper"]) / 2
         else:
             energy_level_pre = model.energy_level_ev[time - 1]
+        # get discharging is v2g is allowed
+        if hasattr(model, "discharging_ev"):
+            discharging = model.discharging_ev[time]
+        else:
+            discharging = 0
+        # get time increment
+        delta_t = (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
         return model.energy_level_ev[time] == \
             energy_level_pre + \
-            model.charging_efficiency * model.charging_ev[time] * \
-            (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
+            model.charging_efficiency * model.charging_ev[time] * delta_t - \
+            discharging / model.discharging_efficiency * delta_t
 
     def fixed_energy_level(model, time):
         '''
@@ -40,13 +49,19 @@ def add_ev_model(model, flex_bands, efficiency=0.9):
             (model.flex_bands.loc[time, "lower"] +
              model.flex_bands.loc[time, "upper"]) / 2
     # save fix parameters
-    model.charging_efficiency = efficiency
+    model.charging_efficiency = charging_efficiency
+    model.discharging_efficiency = discharging_efficiency
     model.flex_bands = flex_bands
     # set up variables
     model.charging_ev = \
         pm.Var(model.time_set,
                bounds=lambda m, t:
                (0, m.flex_bands.loc[t, "power"]))
+    if v2g:
+        model.discharging_ev = \
+            pm.Var(model.time_set,
+                   bounds=lambda m, t:
+                   (0, m.flex_bands.loc[t, "power"]))
     model.energy_level_ev = \
         pm.Var(model.time_set,
                bounds=lambda m, t:
@@ -58,7 +73,8 @@ def add_ev_model(model, flex_bands, efficiency=0.9):
     return model
 
 
-def add_evs_model(model, flex_bands, efficiency=0.9):
+def add_evs_model(model, flex_bands, efficiency=0.9, v2g=False,
+                  discharging_efficiency=0.9, use_binaries=False):
     def charging_ev(model, cp, time):
         """
         Constraint for charging of EV that has to ly between the lower and upper
@@ -69,15 +85,31 @@ def add_evs_model(model, flex_bands, efficiency=0.9):
         :param time:
         :return:
         """
+        # get previous energy level
         if time == 0:
             energy_level_pre = (model.flex_bands["lower_energy"].iloc[time][cp] +
                                 model.flex_bands["upper_energy"].iloc[time][cp]) / 2
         else:
             energy_level_pre = model.energy_level_ev[cp, time - 1]
+        # get discharging is v2g is allowed
+        if hasattr(model, "discharging_ev"):
+            if model.use_binaries_ev:
+                discharging = model.y_discharge_ev[cp, time] * model.discharging_ev[cp, time]
+            else:
+                discharging = model.discharging_ev[cp, time]
+        else:
+            discharging = 0
+        # get charging
+        if model.use_binaries_ev:
+            charging = model.y_charge_ev[cp, time] * model.charging_ev[cp, time]
+        else:
+            charging = model.charging_ev[cp, time]
+        # get time increment
+        delta_t = (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
         return model.energy_level_ev[cp, time] == \
             energy_level_pre + \
-            model.charging_efficiency * model.charging_ev[cp, time] * \
-            (pd.to_timedelta(model.time_increment) / pd.to_timedelta('1h'))
+            model.charging_efficiency_ev * charging * delta_t - \
+            discharging / model.discharging_efficiency_ev * delta_t
 
     def fixed_energy_level(model, cp, time):
         '''
@@ -91,9 +123,14 @@ def add_evs_model(model, flex_bands, efficiency=0.9):
                (model.flex_bands["lower_energy"].iloc[time][cp] +
                 model.flex_bands["upper_energy"].iloc[time][cp]) / 2
 
+    def charge_discharge_ev_binaries(model, cp, time):
+        return model.y_charge_ev[cp, time] + model.y_discharge_ev[cp, time] <= 1
+
     # save fix parameters
-    model.charging_efficiency = efficiency
+    model.charging_efficiency_ev = efficiency
+    model.discharging_efficiency_ev = discharging_efficiency
     model.flex_bands = flex_bands
+    model.use_binaries_ev = use_binaries
     # set up set
     model.charging_points_set = \
         pm.Set(initialize=model.flex_bands["lower_energy"].columns)
@@ -102,6 +139,24 @@ def add_evs_model(model, flex_bands, efficiency=0.9):
         pm.Var(model.charging_points_set, model.time_set,
                bounds=lambda m, cp, t:
                (0, m.flex_bands["upper_power"].iloc[t][cp]))
+    if v2g:
+        model.discharging_ev = \
+            pm.Var(model.charging_points_set, model.time_set,
+                   bounds=lambda m, cp, t:
+                   (0, m.flex_bands["upper_power"].iloc[t][cp]))
+        if use_binaries is True:
+            model.y_charge_ev = pm.Var(
+                model.charging_points_set,
+                model.time_set,
+                within=pm.Binary,
+                doc='Binary defining for each car c and timestep t if it is charging'
+            )
+            model.y_discharge_ev = pm.Var(
+                model.charging_points_set,
+                model.time_set,
+                within=pm.Binary,
+                doc='Binary defining for each car c and timestep t if it is discharging'
+            )
     model.energy_level_ev = \
         pm.Var(model.charging_points_set, model.time_set,
                bounds=lambda m, cp, t:
@@ -110,6 +165,10 @@ def add_evs_model(model, flex_bands, efficiency=0.9):
     # add constraints
     model.EVCharging = pm.Constraint(model.charging_points_set, model.time_set,
                                      rule=charging_ev)
+    if use_binaries:
+        model.NoSimultaneousChargingAndDischargingEV = pm.Constraint(
+            model.charging_points_set, model.time_set,
+            rule=charge_discharge_ev_binaries)
     model.FixedEVEnergyLevel = \
         pm.Constraint(model.charging_points_set, model.times_fixed_soc,
                       rule=fixed_energy_level)
@@ -187,6 +246,7 @@ def import_and_merge_flexibility_bands_extended(data_dir, grid_ids=[],
             flexibility_bands_tmp = \
                 pd.read_csv(data_dir+f'/{grid_id}/{band}_{append}.csv',
                             index_col=0, parse_dates=True, dtype=np.float32)
+
             if band_df.index.empty:
                 band_df = \
                     pd.DataFrame(columns=[append], index=flexibility_bands_tmp.index,
@@ -200,8 +260,34 @@ def import_and_merge_flexibility_bands_extended(data_dir, grid_ids=[],
             flexibility_bands[band] = band_df + 1e-6
         elif "lower" in band:
             flexibility_bands[band] = band_df - 1e-6
+        # remove first week
+        timeindex_full = pd.date_range("2011-01-01", end='2012-01-07 23:45:00', freq="15min")
+        timeindex = pd.date_range("2011-01-01", end='2011-12-31 23:45:00', freq="15min")
+        flexibility_bands[band].index = timeindex_full
+        flexibility_bands[band] = flexibility_bands[band].loc[timeindex]
     print(f"Total of {nr_ev} EVs imported.")
     return flexibility_bands
+
+
+def get_bool_list_of_bevs_in_evs(data_dir, grid_id):
+    """
+    Method to get list of bools indicating which files are bevs
+
+    :param data_dir:
+    :param grid_id:
+    :return:
+    """
+    bevs = []
+    dirs = os.listdir(os.path.join(data_dir, str(grid_id), "simbev_run"))
+    for dir_tmp in dirs:
+        if os.path.isdir(os.path.join(data_dir, str(grid_id), "simbev_run", dir_tmp)):
+            evs = os.listdir(os.path.join(data_dir, str(grid_id), "simbev_run", dir_tmp))
+            for ev in evs:
+                if "bev" in ev:
+                    bevs.append(True)
+                else:
+                    bevs.append(False)
+    return bevs
 
 
 def determine_shifting_times(data_dir, grid_ids, use_cases):
@@ -227,13 +313,15 @@ def scale_electric_vehicles(nr_ev_mio, scenario_dict):
     flex_bands = {}
     if scenario_dict["ev_mode"] == "flexible":
         for band in ["upper_power", "upper_energy", "lower_energy"]:
+            # for shifting within standing times
             if not scenario_dict["ev_extended_flex"]:
                 flex_bands[band] = scenario_dict["ts_flex_bands"][band].divide(
                     scenario_dict["nr_ev_ref"]).multiply(nr_ev)[
                     scenario_dict["use_cases_flexible"]]
+            # for shifting over standing times
             else:
                 flex_bands[band] = scenario_dict["ts_flex_bands"][band].divide(
-                    scenario_dict["nr_ev_ref"]).multiply(nr_ev)
+                    scenario_dict["nr_ev_extended_flex"]).multiply(nr_ev)
     return ref_charging, flex_bands
 
 
@@ -256,10 +344,10 @@ def model_input_evs(scenario_dict, ev_mode, i=None, nr_ev_mio=None):
                 ~reference_charging.columns.isin(scenario_dict["use_cases_flexible"])]
             energy_ev = \
                 reference_charging[use_cases_inflexible].sum().sum() + \
-                (flexibility_bands["upper_energy"].sum(axis=1)[
-                     -1] +
-                 flexibility_bands["lower_energy"].sum(axis=1)[
-                     -1]) / 0.9 / 2
+                (flexibility_bands["upper_energy"].sum(axis=1)[-1] -
+                 flexibility_bands["upper_energy"].sum(axis=1)[0] +
+                 flexibility_bands["lower_energy"].sum(axis=1)[-1] -
+                 flexibility_bands["lower_energy"].sum(axis=1)[0]) / 0.9 / 2
             ref_charging = reference_charging[use_cases_inflexible].sum(axis=1)
         else:
             energy_ev = reference_charging.sum().sum()
@@ -286,8 +374,8 @@ if __name__ == "__main__":
     mode = "extended"
     save_files = True
     if mode == "extended":
-        merge_bands = False
-        extract_shifting_time = True
+        merge_bands = True
+        extract_shifting_time = False
     solver = "gurobi"
     time_increment = pd.to_timedelta('1h')
     if mode == "single":
@@ -380,14 +468,14 @@ if __name__ == "__main__":
                 flex_bands_final[band].to_csv(f"data/{band}_flex+.csv")
     elif mode == "extended":
         grid_dir = r"H:\Grids"
-        grid_ids = [176, 177, 1056, 1690, 1811, 2534]
+        grid_ids = [176, 177, 1056, 1690, 1811, 2534] # 176, 177, 1056, 1690, 1811, 2534
         use_case = "extended"
         if merge_bands:
             bands = import_and_merge_flexibility_bands_extended(grid_dir, grid_ids=grid_ids,
-                                                                append=use_case)
+                                                                append=use_case+"_bevs")
             if save_files:
                 for band in bands.keys():
-                    bands[band].to_csv(f"data/{band}_flex++.csv")
+                    bands[band].to_csv(f"data/{band}_extended_bevs.csv")
         if extract_shifting_time:
             determine_shifting_times(grid_dir, grid_ids=grid_ids, use_cases=[use_case])
     print("SUCCESS")

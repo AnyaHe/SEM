@@ -22,15 +22,16 @@ if __name__ == "__main__":
     plot_results = False
     nr_iterations = 10
     solver = "gurobi"
-    ev_mode = None # None, "flexible", "inflexible"
-    hp_mode = "flexible"  # None, "flexible", "inflexible"
-    tes_relative_size = 4 # in share standard
-    ev_extended_flex = True
-    flexible_ev_use_cases = ["home", "work", "public"]
+    hp_mode = None # None, "flexible", "inflexible"
+    ev_mode = None  # None, "flexible", "inflexible"
+    tes_relative_size = 1 # in share standard
+    ev_extended_flex = False
+    ev_v2g = False
+    flexible_ev_use_cases = ["home", "work"]
     if ev_extended_flex:
         flexible_ev_use_cases = ["home", "work", "public"]
     # create results directory
-    res_dir = os.path.join(f"results/{scenario}")
+    res_dir = os.path.join(f"results/two_weeks_weight_one/{scenario}")
     os.makedirs(res_dir, exist_ok=True)
     # load scenario values
     scenario_dict = base_scenario(vres_data_source=vres_data_source, year=year)
@@ -74,7 +75,7 @@ if __name__ == "__main__":
             model = add_heat_pump_model(model, p_nom_hp, capacity_tes,
                                         scenario_dict["ts_cop"], ts_heat_demand)
         if ev_mode == "flexible":
-            add_evs_model(model, flexibility_bands)
+            add_evs_model(model, flexibility_bands, v2g=scenario_dict["ev_v2g"])
         model = add_storage_equivalent_model(model, new_res_load,
                                              time_horizons=scenario_dict["time_horizons"])
         model.objective = pm.Objective(rule=minimize_energy,
@@ -99,8 +100,8 @@ if __name__ == "__main__":
             energy_levels = \
                 pd.Series(model_tmp.energy_levels.extract_values()).unstack().T.set_index(
                     new_res_load.index)
-            abs_charging = pd.Series(model_tmp.abs_charging.extract_values()).unstack()
-            df_tmp = (abs_charging.sum(axis=1) / 2).reset_index().rename(
+            discharging = pd.Series(model_tmp.discharging.extract_values()).unstack()
+            df_tmp = (discharging.sum(axis=1)).reset_index().rename(
                 columns={"index": "storage_type", 0: "energy_stored"})
             df_tmp["share_pv"] = share_pv
             if iter == 0:
