@@ -135,8 +135,11 @@ def base_scenario(vres_data_source="rn", demand_data_source="entso", **kwargs):
         solar_rn = pd.read_csv("data/ninja_pv_country_DE_merra-2_corrected.csv",
                                index_col=0, parse_dates=True, header=2)
         vres = pd.DataFrame()
-        vres["wind"] = wind_rn["national"]
-        vres["solar"] = solar_rn["national"]
+        wind_onshore_capacity = kwargs.get("wind_onshore_capacity", 60.9 )
+        wind_offshore_capacity = kwargs.get("wind_onshore_capacity", 8.5)
+        solar_capacity = kwargs.get("solar_capacity", 81.7)
+        vres["wind"] = wind_rn["onshore"]*wind_onshore_capacity + wind_rn["offshore"]*wind_offshore_capacity
+        vres["solar"] = solar_rn["national"]*solar_capacity
         year = kwargs.get("year_generation", 2019)
         if year is not None:
             vres = vres.loc[vres.index.year == year].iloc[:len(timeindex)]
