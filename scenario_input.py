@@ -3,6 +3,7 @@ import os
 import json
 
 from data_preparation.data_preparation import get_heat_pump_timeseries_data
+from ev_model import scale_electric_vehicles
 
 
 def scenario_variation_heat_pumps():
@@ -80,7 +81,7 @@ def scenario_variation_electric_vehicles_and_heat_pumps():
     return scenarios
 
 
-def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
+def base_scenario(vres_data_source="rn", demand_data_source="entso", **kwargs):
     """
     Method defining the default scenario input for three different storage equivalents:
     daily, weekly and seasonal
@@ -92,9 +93,12 @@ def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
         time series of the ego-project and entso-e have to be added to the data folder.
     :param kwargs: dict
         Optional input parameters
-        year: int
+        year_generation: int
             Only used for vres_data_source="rn", if set, a different year of the input data
-            is used.
+            is used. Default: 2019
+        year_load: int
+            Only used for demand_data_source="entso", if set, a different year of the input data
+            is used. Default: 2019
     :return: dict
         Dictionary with scenario input data
     """
@@ -103,7 +107,7 @@ def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
         demand = pd.read_csv(r"data/demand_germany_ego100.csv", index_col=0,
                              parse_dates=True)
     elif demand_data_source == "entso":
-        year = kwargs.get("year")
+        year = kwargs.get("year_load", 2019)
         demand = pd.DataFrame()
         for month in ["01", "02", "03", "04", "05", "06",
                       "07", "08", "09", "10", "11", "12"]:
@@ -117,7 +121,7 @@ def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
         demand = demand.iloc[:len(timeindex)]
         demand.index = timeindex
         # adjust timeseries to reference demand to make more comparable
-        demand_ref = kwargs.get("reference_demand", 499299.467829801)
+        demand_ref = kwargs.get("reference_demand", None)
         if demand_ref is not None:
             demand = demand.divide(demand.sum().sum()).multiply(demand_ref)
     else:
@@ -133,12 +137,12 @@ def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
         vres = pd.DataFrame()
         vres["wind"] = wind_rn["national"]
         vres["solar"] = solar_rn["national"]
-        year = kwargs.get("year", None)
+        year = kwargs.get("year_generation", 2019)
         if year is not None:
             vres = vres.loc[vres.index.year == year].iloc[:len(timeindex)]
             vres.index = timeindex
-        # adjust timeseries to reference share pv to make more comparaböe
-        share_pv = kwargs.get("share_pv", 0.2817756687234966)
+        # adjust timeseries to reference share pv to make more comparable
+        share_pv = kwargs.get("share_pv", None)
         if share_pv is not None:
             sum_energy = vres.sum().sum()
             vres_scaled = vres.divide(vres.sum())
@@ -151,13 +155,14 @@ def base_scenario(vres_data_source="ego", demand_data_source="ego", **kwargs):
     return {
         "objective": "minimize_discharging",
         "weighting": [1.001, 1.001**2, 1.001**3],
-        "time_horizons": [24, 14*24, 24*366],
+        "time_horizons": [24, 28*24, 24*366],
         "time_increment": '1h',
         "ts_vres": vres.loc[timeindex],
         "ts_demand": demand.loc[timeindex],
         "hp_mode": None, "tes_relative_size": 1,
         "ev_mode": None, "flexible_ev_use_cases": [],
-        "ev_extended_flex": False, "ev_v2g": False
+        "ev_extended_flex": False, "ev_v2g": False,
+        "ts_timesteps": timeindex
     }
 
 
@@ -184,7 +189,7 @@ def scenario_input_hps(scenario_dict={}, mode="inflexible", timesteps=None,
         "hp_weight_floor": 0.6,
         "hp_weight_radiator": 0.4,
         "ts_timesteps": timesteps,
-        "hp_dir": r"U:\Software\Cost-functions\distribution-grid-expansion-cost-functions\data"
+        "hp_dir": r"U:\Software\Flexibility-Quantification\data"
     })
     heat_demand, cop = \
         get_heat_pump_timeseries_data(scenario_dict["hp_dir"], scenario_dict)
@@ -301,15 +306,23 @@ def adjust_timeseries_data(scenario_dict):
     :return:
     """
     def shift_and_extend_ts_by_one_timestep(ts, time_increment="1h", value=0):
-        if isinstance(value, pd.Series):
-            ts_first = pd.DataFrame(
-                columns=[ts.index[0] - pd.to_timedelta(time_increment)],
-                index=value.index,
-                data=value.values).T
-        else:
+        if isinstance(ts, pd.DataFrame):
+            if isinstance(value, pd.Series):
+                ts_first = pd.DataFrame(
+                    columns=[ts.index[0] - pd.to_timedelta(time_increment)],
+                    index=value.index,
+                    data=value.values).T
+            else:
+                ts_first = pd.DataFrame(
+                    columns=ts.columns,
+                    index=[ts.index[0] - pd.to_timedelta(time_increment)],
+                    data=value)
+        elif isinstance(ts, pd.Series):
             ts_first = pd.Series(
                 index=[ts.index[0] - pd.to_timedelta(time_increment)],
                 data=value)
+        else:
+            raise ValueError("Unexpected type of timeseries.")
         ts = pd.concat([ts_first, ts])
         ts.index = \
             ts.index + pd.to_timedelta(time_increment)
@@ -341,14 +354,89 @@ def adjust_timeseries_data(scenario_dict):
     return scenario_dict
 
 
+def shift_timeseries_data(scenario_dict, nr_timesteps):
+    """
+    Method to shift all timeseries to check out different starting times. Note that this method should be called before
+    adjust_timeseries_data
+    :param scenario_dict:
+    :param nr_timesteps: int
+        number of time steps that the timeseries should be shifted
+    :return:
+    """
+    timesteps = scenario_dict["ts_timesteps"]
+    timesteps_tmp = timesteps[nr_timesteps:].append(timesteps[:nr_timesteps])
+
+    for key in scenario_dict.keys():
+        if key.startswith("ts_"):
+            if (key == "ts_initial") or (key == "ts_timesteps"):
+                pass
+            elif key == "ts_flex_bands":
+                for band in scenario_dict[key].keys():
+                    scenario_dict[key][band] = \
+                        scenario_dict[key][band].loc[timesteps_tmp]
+                    scenario_dict[key][band].index = timesteps
+            else:
+                scenario_dict[key] = scenario_dict[key].loc[timesteps_tmp]
+                scenario_dict[key].index = timesteps
+
+    return scenario_dict
+
+
+def get_imbalance_for_individual_storage_type(
+        storage_type, residual_load, scenario_dict, ts_heat_el=None,
+        nr_ev_mio=0):
+    """
+
+    :param storage_type: int
+        storage type for which the imbalance is determined
+    :param residual_load: pd.Series
+        residual load which is base for imbalance timeseries
+    :param scenario_dict: dict
+        dictionary containing scenario information
+    :return:
+    """
+    # get residual load with reference operation
+    residual_load_ref = residual_load.copy()
+    if "ts_ref_charging" in scenario_dict.keys():
+        (reference_charging, flexibility_bands) = scale_electric_vehicles(
+            nr_ev_mio, scenario_dict)
+        residual_load_ref += reference_charging[scenario_dict["use_cases_flexible"]].sum(axis=1)
+    if scenario_dict["hp_mode"] == "flexible":
+        if ts_heat_el is None:
+            ts_heat_el = pd.Series(
+                index=scenario_dict["ts_demand"].index, data=0)
+        residual_load_ref += ts_heat_el
+    # do not use fist timestep
+    residual_load_tmp = residual_load[1:]
+    residual_load_tmp.index = residual_load.index[:-1]
+    residual_load_ref = residual_load_ref[1:]
+    residual_load_ref.index = residual_load.index[:-1]
+    # get mean over smaller time horizon, if there is one
+    if storage_type != 0:
+        h_small = scenario_dict["time_horizons"][storage_type-1]
+        mean = residual_load_tmp.resample(f"{h_small}h").mean()
+        residual_load_tmp = mean.reindex(residual_load_tmp.index, method='ffill')
+    # get only imbalance of time horizon
+    h_stor = scenario_dict["time_horizons"][storage_type]
+    mean = residual_load_ref.resample(f"{h_stor}h").mean()
+    residual_load_tmp -= mean.reindex(residual_load_tmp.index, method='ffill')
+    # add first timestep again
+    resulting_residual_load = pd.concat([residual_load[[0]], residual_load_tmp])
+    resulting_residual_load.index = residual_load.index
+    return resulting_residual_load
+
+
 def get_new_residual_load(scenario_dict, share_pv=None, sum_energy_heat=0, energy_ev=0,
-                          ref_charging=None, ts_heat_el=None) :
+                          ref_charging=None, ts_heat_el=None, ref_charging_se=None,
+                          imbalance_storage_type=None, nr_ev_mio=0):
     """
     Method to calculate new residual load for input into storage equivalent model.
 
     :param scenario_dict:
     :param sum_energy_heat:
     :param energy_ev:
+    :param imbalance_storage_type: int
+        storage type for which imbalance is attributed for
     :return:
     """
 
@@ -357,6 +445,8 @@ def get_new_residual_load(scenario_dict, share_pv=None, sum_energy_heat=0, energ
         ref_charging = pd.Series(index=scenario_dict["ts_demand"].index, data=0)
     if ts_heat_el is None:
         ts_heat_el = pd.Series(index=scenario_dict["ts_demand"].index, data=0)
+    if ref_charging_se is None:
+        ref_charging_se = pd.DataFrame(index=scenario_dict["ts_demand"].index, columns=[0], data=0)
     if share_pv is None:
         scaled_ts_reference = scenario_dict["ts_vres"].divide(
             scenario_dict["ts_vres"].sum().sum())
@@ -367,8 +457,16 @@ def get_new_residual_load(scenario_dict, share_pv=None, sum_energy_heat=0, energ
         scaled_ts_reference["wind"] = scaled_ts_reference["wind"] * (1 - share_pv)
     vres = scaled_ts_reference * (sum_energy + sum_energy_heat + energy_ev)
     new_res_load = \
-        scenario_dict["ts_demand"].sum(axis=1) + ref_charging - vres.sum(axis=1)
+        scenario_dict["ts_demand"].sum(axis=1) + ref_charging - vres.sum(axis=1) + ref_charging_se.sum(axis=1)
     if scenario_dict["hp_mode"] != "flexible":
         new_res_load = new_res_load + \
                        ts_heat_el
+    if imbalance_storage_type is not None:
+        get_imbalance_for_individual_storage_type(
+            storage_type=imbalance_storage_type,
+            residual_load=new_res_load,
+            scenario_dict=scenario_dict,
+            ts_heat_el=ts_heat_el,
+            nr_ev_mio=nr_ev_mio
+        )
     return new_res_load
