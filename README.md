@@ -1,4 +1,4 @@
-# Flexibility-Quantification
+# Storage Equivalent Model (SEM)
 Repository to measure flexibility requirements in highly renewable energy systems.
 
 The method relies on idealised storage models that allow shifting on different time-scales to balance supply and demand. Per default, short- (daily), medium- (bi-weekly) and long-term (seasonal) storage units are defined. The storage units have to be balanced at the end of their respective time scale, e.g. the daily storage has the same energy level at the beginning and end of each day. 
