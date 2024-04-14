@@ -65,9 +65,17 @@ def add_storage_equivalent_model(model, residual_load, **kwargs):
             ev = charging_ev - discharging_ev
         else:
             ev = 0
+        if hasattr(model, "charging_bess"):
+            if model.use_binaries_bess:
+                bess = model.y_charge_bess[time] * model.charging_bess[time] - \
+                       model.y_discharge_bess[time] * model.discharging_bess[time]
+            else:
+                bess = model.charging_bess[time] - model.discharging_bess[time]
+        else:
+            bess = 0
         return sum(model.charging[time_horizon, time] for time_horizon in
                    model.time_horizons_set) + \
-               model.residual_load.iloc[time] + hp_el + ev == 0
+               model.residual_load.iloc[time] + hp_el + ev + bess == 0
 
     def maximum_charging(model, time_horizon, time):
         return model.charging_max[time_horizon] >= model.charging[time_horizon, time]
@@ -381,7 +389,7 @@ def determine_storage_durations(charging, index="duration"):
     return storage_durations
 
 
-def solve_model(model, solver, hp_mode=None, ev_mode=None, ev_v2g=False):
+def solve_model(model, solver, hp_mode=None, ev_mode=None, ev_v2g=False, bess_mode=None):
     np.random.seed(int(time.time()))
     opt = pm.SolverFactory(solver)
     if solver == "gurobi":
@@ -411,6 +419,14 @@ def solve_model(model, solver, hp_mode=None, ev_mode=None, ev_v2g=False):
             discharging_tes *= pd.Series(model.y_discharge_tes.extract_values())
         if charging_tes.multiply(discharging_tes).sum() > 1e-3:
             raise ValueError("Simultaneous charging and discharging of TES. Please check.")
+    if bess_mode == "flexible":
+        charging_bess = pd.Series(model.charging_bess.extract_values())
+        discharging_bess = pd.Series(model.discharging_bess.extract_values())
+        if model.use_binaries_bess:
+            charging_bess *= pd.Series(model.y_charge_bess.extract_values())
+            discharging_bess *= pd.Series(model.y_discharge_bess.extract_values())
+        if charging_bess.multiply(discharging_bess).sum() > 1e-3:
+            raise ValueError("Simultaneous charging and discharging of BESS. Please check.")
     # extract results
     slacks = pd.Series(model.slack_res_load_neg.extract_values()) + \
              pd.Series(model.slack_res_load_pos.extract_values())

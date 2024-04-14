@@ -6,6 +6,18 @@ from data_preparation.data_preparation import get_heat_pump_timeseries_data
 from ev_model import scale_electric_vehicles
 
 
+def scenario_variation_battery_storage():
+    scenarios = {
+        "BESS_reference": {
+            "bess_mode": "inflexible"
+        },
+        "BESS_flexible": {
+            "bess_mode": "flexible"
+        },
+    }
+    return scenarios
+
+
 def scenario_variation_heat_pumps():
     scenarios = {
         "HP_reference": {
@@ -167,6 +179,40 @@ def base_scenario(vres_data_source="rn", demand_data_source="entso", **kwargs):
         "ev_extended_flex": False, "ev_v2g": False,
         "ts_timesteps": timeindex
     }
+
+
+def scenario_input_bess(scenario_dict={}, mode="inflexible", timesteps=None,
+                        use_binaries=False):
+    """
+    Method to add relevant information on modelled hps
+    :param scenario_dict: dict
+        Dictionary with base scenario values, see ref:base_scenario
+    :param mode: str
+        Mode of heat pump operation, possible values: "flexible" and "inflexible"
+    :return:
+        Updated dictionary with additional information on HPs
+    """
+    if timesteps is None:
+        if "ts_demand" in scenario_dict.keys():
+            timesteps = scenario_dict["ts_demand"].index
+        else:
+            timesteps = pd.date_range("1/1/2011 00:00", periods=8760, freq="H")
+    bess_dir = r"C:\Users\aheider\Documents\Software\Flexibility-Quantification\data"
+    bess = pd.read_csv(os.path.join(bess_dir, "storage_units.csv"))
+    scenario_dict.update({
+        "bess_dir": bess_dir,
+        "bess_mode": mode,
+        "ts_bess_reference": pd.read_csv(os.path.join(
+            bess_dir, "bess_reference_operation.csv"),
+            index_col=0, parse_dates=True
+        ).loc[timesteps, "0"],  # GWh
+        "bess_p_nom": bess.loc[0, "p_nom"],
+        "bess_capacity": bess.loc[0, "capacity"],
+        "bess_efficiency_charging": 0.98,
+        "bess_efficiency_discharging": 0.98,
+        "bess_use_binaries": use_binaries,
+    })
+    return scenario_dict
 
 
 def scenario_input_hps(scenario_dict={}, mode="inflexible", timesteps=None,
@@ -431,7 +477,7 @@ def get_imbalance_for_individual_storage_type(
 
 def get_new_residual_load(scenario_dict, share_pv=None, sum_energy_heat=0, energy_ev=0,
                           ref_charging=None, ts_heat_el=None, ref_charging_se=None,
-                          imbalance_storage_type=None, nr_ev_mio=0):
+                          imbalance_storage_type=None, nr_ev_mio=0, ts_bess=None):
     """
     Method to calculate new residual load for input into storage equivalent model.
 
@@ -448,6 +494,8 @@ def get_new_residual_load(scenario_dict, share_pv=None, sum_energy_heat=0, energ
         ref_charging = pd.Series(index=scenario_dict["ts_demand"].index, data=0)
     if ts_heat_el is None:
         ts_heat_el = pd.Series(index=scenario_dict["ts_demand"].index, data=0)
+    if ts_bess is None:
+        ts_bess = pd.Series(index=scenario_dict["ts_demand"].index, data=0)
     if ref_charging_se is None:
         ref_charging_se = pd.DataFrame(index=scenario_dict["ts_demand"].index, columns=[0], data=0)
     if share_pv is None:
@@ -460,7 +508,8 @@ def get_new_residual_load(scenario_dict, share_pv=None, sum_energy_heat=0, energ
         scaled_ts_reference["wind"] = scaled_ts_reference["wind"] * (1 - share_pv)
     vres = scaled_ts_reference * (sum_energy + sum_energy_heat + energy_ev)
     new_res_load = \
-        scenario_dict["ts_demand"].sum(axis=1) + ref_charging - vres.sum(axis=1) + ref_charging_se.sum(axis=1)
+        scenario_dict["ts_demand"].sum(axis=1) + ref_charging - vres.sum(axis=1) + \
+        ref_charging_se.sum(axis=1) + ts_bess
     if scenario_dict["hp_mode"] != "flexible":
         new_res_load = new_res_load + \
                        ts_heat_el
