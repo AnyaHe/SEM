@@ -8,6 +8,7 @@ import time
 from scenario_input import base_scenario, save_scenario_dict, get_new_residual_load, adjust_timeseries_data
 from storage_equivalent import set_up_base_model, add_storage_equivalent_model, \
     minimize_discharging, determine_storage_durations
+from edisgo.edisgo import import_edisgo_from_files
 
 
 def load_adapted_timeseries_per_grid(gd_dir, gd_id, nt, ts_hh):
@@ -17,6 +18,16 @@ def load_adapted_timeseries_per_grid(gd_dir, gd_id, nt, ts_hh):
     household_mapping = pd.read_csv(os.path.join(gd_dir, str(gd_id), "mapping.csv"),
                                     index_col=0).set_index("name_old")
     ts_load = pd.DataFrame()
+    # save original load
+    ts_customer_group = pd.read_csv(
+        os.path.join(ts_dir, "HH", "Ec", "timeseries.csv"),
+        index_col=0, parse_dates=True)
+    ts_hh += ts_customer_group.loc[:, household_mapping.name_new].sum(axis=1)
+    ts_load = update_load_ts(household_mapping, households, nt, ts_load)
+    return ts_load, ts_hh
+
+
+def update_load_ts(household_mapping, households, nt, ts_load):
     for (has_ev, has_hp, has_pv, has_bess), household_group in households.groupby(
             ["has_ev", "has_hp", "has_pv", "has_bess"]):
         # get names of consumers in timeseries
@@ -34,35 +45,75 @@ def load_adapted_timeseries_per_grid(gd_dir, gd_id, nt, ts_hh):
         ts_load_tmp = ts_customer_group.loc[:, names_new]
         ts_load_tmp.columns = household_group.index
         ts_load = pd.concat([ts_load, ts_load_tmp], axis=1)
+    return ts_load
+
+
+def load_adapted_timeseries_per_grid_clusters(gd_dir, gd_id, nt, ts_hh):
+    clustering = pd.read_csv(os.path.join(gd_dir, "clustering.csv"), index_col=0)
+    if "Er-mv" in nt:
+        cluster = clustering.loc[f"{grid_id}_{penetration}", "Cluster"]
+        return load_adapted_timeseries_per_grid(
+            gd_dir=gd_dir,
+            gd_id=gd_id,
+            nt=f"Er-{cluster}",
+            ts_hh=ts_hh
+        )
+    else:
         # save original load
-        if customer_group == "HH":
-            ts_hh += ts_customer_group.loc[:, household_mapping.name_new].sum(axis=1)
-    return ts_load, ts_hh
+        household_mapping = pd.read_csv(os.path.join(gd_dir, str(gd_id), "mapping.csv"),
+                                        index_col=0).set_index("name_old")
+        ts_customer_group = pd.read_csv(
+            os.path.join(ts_dir, "HH", "Ec", "timeseries.csv"),
+            index_col=0, parse_dates=True)
+        ts_hh += ts_customer_group.loc[:, household_mapping.name_new].sum(axis=1)
+        # load new time series
+        households = \
+            pd.read_csv(os.path.join(gd_dir, str(gd_id),
+                                     f"households_{penetration}.csv"), index_col=0)
+        edisgo_obj = import_edisgo_from_files(
+            os.path.join(gd_dir, str(gd_id)),
+        )
+        # get clusters and households in cluster
+        col_names = [f"{grid.id}_{penetration}" for grid in edisgo_obj.topology.lv_grids
+                     if f"{grid.id}_{penetration}" in clustering.index]
+        clustering_tmp = clustering.loc[col_names]
+        clustering_tmp.index = clustering_tmp.index.str.split("_", expand=True).levels[0]
+
+        households["cluster"] = clustering_tmp.loc[edisgo_obj.topology.buses_df.loc[
+                                                       households.bus, "lv_grid_id"].astype(int).astype(
+            str), "Cluster"].values
+        ts_load = pd.DataFrame()
+        for cluster in households.cluster.unique():
+            households_tmp = households.loc[households.cluster == cluster]
+            if tariff == "Er":
+                tariff_tmp = f"Er-{cluster}"
+            elif tariff == "Er_Clf":
+                tariff_tmp = f"Er-{cluster}_Clf"
+            else:
+                raise NotImplementedError
+            ts_load = update_load_ts(household_mapping, households_tmp, tariff_tmp, ts_load)
+
+        return ts_load, ts_hh
 
 
 if __name__ == "__main__":
-    penetration = 0.1
+    penetration = 0.9
 
     data_dir = r"H:\Tariffs"
     grid_dir = os.path.join(data_dir, "Grids")
     grids = os.listdir(grid_dir)
     scenario = f"Variation_pricing_{penetration}"
     tariffs = [
-        # 'Er-mv',
-        # 'Er',
-        'Cl',
-        'Clf',
-        'Csl',
         'Ec',
         'Edn',
-        'Ec_Clf',
-        # 'Ec_Clf_Sv',
-        # 'Ec_Cl_Sv',
+        'Er',
+        'Er-mv',
+        'Cl',
+        'Csl',
+        'Clf',
+        'Er_Clf',
         'Ec_Sr',
-        'Ec_Sv',
         'Clf_Sr',
-        # 'Edn_Cl',
-        # 'Edn_Clf'
     ]
     ts_dir = r"H:\Tariffs\Timeseries"
     solver = "gurobi"
@@ -93,12 +144,20 @@ if __name__ == "__main__":
                 int(grid_id)
             except:
                 continue
-            ts_customer_group_grid, ts_households_orig = load_adapted_timeseries_per_grid(
-                gd_dir=grid_dir,
-                gd_id=grid_id,
-                nt=tariff,
-                ts_hh=ts_households_orig
-            )
+            if "Er" in tariff:
+                ts_customer_group_grid, ts_households_orig = load_adapted_timeseries_per_grid_clusters(
+                    gd_dir=grid_dir,
+                    gd_id=grid_id,
+                    nt=tariff,
+                    ts_hh=ts_households_orig
+                )
+            else:
+                ts_customer_group_grid, ts_households_orig = load_adapted_timeseries_per_grid(
+                    gd_dir=grid_dir,
+                    gd_id=grid_id,
+                    nt=tariff,
+                    ts_hh=ts_households_orig
+                )
             ts_customer_group = pd.concat([ts_customer_group, ts_customer_group_grid], axis=1)
         scaling_hh = 19400/len(ts_customer_group.columns)
         scenario_dict["ts_demand"]["Residential_new"] = ts_customer_group.sum(axis=1).multiply(scaling_hh)
